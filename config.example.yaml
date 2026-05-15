@@ -1,0 +1,22 @@
+auto_dl:
+  token: "your-token-here"
+  api_base: "https://api.autodl.com"
+
+ssh:
+  key_path: "C:/Users/pengcheng/Desktop/AutoDL/autodl_key"
+  user: "root"
+
+monitor:
+  idle_warn_minutes: 15
+  idle_auto_shutdown_minutes: 60
+  gpu_poll_interval_seconds: 120
+  log_parse_interval_seconds: 300
+
+cost:
+  daily_budget_yuan: 100
+  balance_warn_yuan: 100
+  balance_critical_yuan: 50
+
+alerts:
+  desktop_notify: true
+  telegram_notify: false
