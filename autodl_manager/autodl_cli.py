@@ -50,7 +50,6 @@ def _get_scp_cmd(key_path: str, port: int) -> list:
     ]
 
 
-# --- 舰队层命令 ---
 
 def cmd_list(args, fleet: FleetManager):
     if args.sync or not args.local:
@@ -162,7 +161,6 @@ def cmd_sync(args, fleet: FleetManager):
     print(f"已同步 {len(instances)} 个实例")
 
 
-# --- 费用命令 ---
 
 def cmd_balance(args, fleet: FleetManager):
     bal = fleet.api.get_balance()
@@ -184,7 +182,6 @@ def cmd_cost(args, fleet: FleetManager, cost: CostTracker):
         print(f"  预估可跑: {runway['runway_days']} 天")
 
 
-# --- 实验流水线命令 ---
 
 def cmd_run(args, config: dict, fleet: FleetManager, session_mgr: SessionManager, cost_tracker: CostTracker):
     current = fleet.get_current()
@@ -335,13 +332,11 @@ def cmd_exec(args, config: dict, fleet: FleetManager):
         print(result.stderr)
 
 
-# --- 入口 ---
 
 def main():
     parser = argparse.ArgumentParser(prog="autodl", description="AutoDL GPU 云管理工具")
     sub = parser.add_subparsers(dest="command")
 
-    # 舰队层
     p_list = sub.add_parser("list", help="列出所有实例")
     p_list.add_argument("--sync", action="store_true", help="强制从 API 同步")
     p_list.add_argument("--local", action="store_true", help="仅本地缓存")
@@ -364,11 +359,9 @@ def main():
 
     sub.add_parser("sync", help="同步实例列表")
 
-    # 费用
     sub.add_parser("balance", help="查询余额")
     sub.add_parser("cost", help="费用汇总")
 
-    # 实验流水线
     p_run = sub.add_parser("run", help="上传并启动训练脚本")
     p_run.add_argument("script", help="本地 Python 脚本路径")
 

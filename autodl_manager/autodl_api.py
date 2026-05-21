@@ -63,7 +63,6 @@ class AutoDLAPI:
 
         return all_items
 
-    # --- 实例管理 ---
 
     def create_instance(
         self,
@@ -122,7 +121,6 @@ class AutoDLAPI:
                     break
         self._request("POST", "/api/v1/dev/instance/pro/release", json={"instance_uuid": uuid})
 
-    # --- 镜像 ---
 
     def save_image(self, uuid: str, name: str) -> str:
         data = self._request(
@@ -135,7 +133,6 @@ class AutoDLAPI:
     def list_private_images(self) -> list:
         return self._paginate("POST", "/api/v1/dev/instance/pro/image/private/list")
 
-    # --- 余额 ---
 
     def get_balance(self) -> dict:
         data = self._request("POST", "/api/v1/dev/wallet/balance")
@@ -148,7 +145,6 @@ class AutoDLAPI:
             "accumulate_yuan": data.get("accumulate", 0) / 1000.0,
         }
 
-    # --- NFS ---
 
     def mount_nfs(self, data_center: str, mount: bool = True) -> None:
         self._request(

@@ -298,7 +298,6 @@ def create_app() -> FastAPI:
         page = request.query_params.get("page", "dashboard")
         return render_page(page)
 
-    # --- 操作（全部用 POST + 重定向）---
 
     @app.post("/action/sync", response_class=HTMLResponse)
     async def action_sync(request: Request):
