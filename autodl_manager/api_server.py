@@ -1,87 +1,56 @@
-from pathlib import Path
+"""AutoDL Manager API Server — REST + SSE + Web 面板。
 
-import yaml
-from fastapi import FastAPI, Request, Form
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-
-from .autodl_api import AutoDLAPI
-from .state_manager import StateManager
-from .fleet_manager import FleetManager
-from .session_manager import SessionManager
-from .cost_tracker import CostTracker
-
-
-STYLE = """
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,'Microsoft YaHei',sans-serif;background:#0d1117;color:#c9d1d9;display:flex;min-height:100vh}
-.sidebar{width:220px;background:#161b22;border-right:1px solid #30363d;padding:20px 0;flex-shrink:0;display:flex;flex-direction:column}
-.sidebar .logo{font-size:1.1em;font-weight:bold;color:#f0f6fc;padding:0 20px 20px;border-bottom:1px solid #30363d;margin-bottom:12px}
-.sidebar a{display:block;padding:8px 20px;color:#8b949e;font-size:0.9em;text-decoration:none;border:none;background:none;width:100%;text-align:left;cursor:pointer}
-.sidebar a:hover,.sidebar a.active{color:#f0f6fc;background:#1c2129}
-.sidebar .nav-section{font-size:0.75em;color:#484f58;padding:16px 20px 6px;text-transform:uppercase;letter-spacing:0.5px}
-.sidebar .token-warn{margin:auto 20px 20px;padding:10px;border-radius:6px;background:#3d1f1f;border:1px solid #f8514933;font-size:0.8em;color:#f85149}
-.main{flex:1;padding:24px;overflow-y:auto}
-.card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;margin-bottom:16px}
-.card-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
-.card-header h2{font-size:1.05em;color:#f0f6fc}
-.metrics{display:flex;gap:12px;flex-wrap:wrap}
-.metric{flex:1;min-width:120px;text-align:center;padding:14px 10px;background:#0d1117;border-radius:6px}
-.metric .value{font-size:1.8em;font-weight:bold;color:#58a6ff}
-.metric .label{font-size:0.8em;color:#8b949e;margin-top:4px}
-.badge{display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.75em;font-weight:bold}
-.badge-running{background:#238636;color:#fff}
-.badge-stopped{background:#484f58;color:#8b949e}
-.badge-warning{background:#9e6a03;color:#fff}
-.badge-critical{background:#da3633;color:#fff}
-.btn{display:inline-block;padding:6px 14px;border-radius:6px;font-size:0.85em;font-weight:500;cursor:pointer;border:1px solid #30363d;background:#21262d;color:#c9d1d9;text-decoration:none;font-family:inherit}
-.btn:hover{background:#30363d}
-.btn-primary{background:#238636;border-color:#238636;color:#fff}
-.btn-primary:hover{background:#2ea043}
-.btn-danger{background:#da3633;border-color:#da3633;color:#fff}
-.btn-danger:hover{background:#f85149}
-.btn-sm{padding:3px 10px;font-size:0.75em}
-.btn-group{display:flex;gap:8px;flex-wrap:wrap}
-table{width:100%;border-collapse:collapse}
-th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #21262d;font-size:0.85em}
-th{color:#8b949e;font-weight:500}
-.alert{padding:8px 12px;border-radius:4px;margin-bottom:4px;font-size:0.85em}
-.alert-warning{background:#3d2e00;border-left:3px solid #d29922}
-.alert-critical{background:#3d1f1f;border-left:3px solid #f85149}
-.alert-info{background:#1c2a3a;border-left:3px solid #58a6ff}
-.info-row{display:flex;gap:24px;margin-top:10px;font-size:0.85em;color:#8b949e;flex-wrap:wrap}
-.info-row span{white-space:nowrap}
-.page{display:none}
-.page.active{display:block}
-.empty{color:#8b949e;padding:20px;text-align:center}
-.toast{padding:10px 18px;border-radius:8px;font-size:0.9em;margin-bottom:12px}
-.toast-ok{background:#238636;color:#fff}
-.toast-err{background:#da3633;color:#fff}
+重构后支持三种实例来源（Pro API / Web 控制台 / 自定义 SSH），
+SSE 实时推送 GPU 数据，Vue 3 现代化前端。
 """
 
+import json
+import time
+import asyncio
+import queue
+from pathlib import Path
+from typing import Optional
+
+import paramiko
+import yaml
+from fastapi import FastAPI, Request, Form, Query
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+
+from .autodl_api import AutoDLAPI, AutoDLAPIError
+from .db import get_db
+from .instance_registry import InstanceRegistry
+from .gpu_collector import GPUCollector
+from .gpu_data import GPU_TYPES, PRO_GPU_TYPES, REGIONS, find_gpu
+
+# ─── SSE 订阅者管理 ───
+_sse_subscribers: list[queue.Queue] = []
+
+
+def _sse_broadcast(event: str, data: dict):
+    """向所有 SSE 订阅者推送事件。"""
+    dead = []
+    for q in _sse_subscribers:
+        try:
+            q.put_nowait({"event": event, "data": data})
+        except Exception:
+            dead.append(q)
+    for q in dead:
+        _sse_subscribers.remove(q)
+
+
+# ─── 配置 ───
 
 def _load_config() -> dict:
+    # 1. 开发模式：相对于源码目录
     config_path = Path(__file__).parent.parent / "config.yaml"
-    with open(config_path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
-
-
-_MANAGERS = None
-
-
-def _get_managers():
-    global _MANAGERS
-    if _MANAGERS is None:
-        config = _load_config()
-        token = config.get("auto_dl", {}).get("token", "")
-        api = AutoDLAPI(token)
-        state = StateManager()
-        ssh_key = config.get("ssh", {}).get("key_path", "")
-        ssh_user = config.get("ssh", {}).get("user", "root")
-        fleet = FleetManager(api, state, ssh_key, ssh_user)
-        session_mgr = SessionManager(state)
-        cost = CostTracker(state)
-        _MANAGERS = (api, state, fleet, session_mgr, cost)
-    return _MANAGERS
+    # 2. PyInstaller frozen：exe 所在目录（sidecar.py 已 chdir 到那里）
+    frozen_path = Path.cwd() / "config.yaml"
+    for p in (config_path, frozen_path):
+        if p.exists():
+            with open(p, "r", encoding="utf-8") as f:
+                return yaml.safe_load(f)
+    return {}
 
 
 def _has_token() -> bool:
@@ -90,297 +59,572 @@ def _has_token() -> bool:
     return bool(t and t != "your-token-here")
 
 
-def _badge(status):
-    m = {"running": "running", "stopped": "stopped", "powering_on": "warning", "powering_off": "warning", "released": "critical"}
-    cls = m.get(status, "stopped")
-    return f'<span class="badge badge-{cls}">{status.upper()}</span>'
+# ─── 全局服务 ───
+
+_registry: Optional[InstanceRegistry] = None
+_api: Optional[AutoDLAPI] = None
+_collector: Optional[GPUCollector] = None
 
 
-def render_page(active_tab: str, msg: str = "", msg_ok: bool = True) -> str:
-    api, state, fleet, session_mgr, cost = _get_managers()
-    has_token = _has_token()
-    token_warn = "" if has_token else '<div class="token-warn">Token 未配置<br>当前为演示模式</div>'
-
-    tabs = [
-        ("dashboard", "仪表盘"),
-        ("instances", "实例管理"),
-        ("cost", "费用"),
-    ]
-    nav = ""
-    for tab_id, tab_name in tabs:
-        cls = "active" if tab_id == active_tab else ""
-        nav += f'<a href="?page={tab_id}" class="{cls}">{tab_name}</a>'
-
-    toast = ""
-    if msg:
-        cls = "toast-ok" if msg_ok else "toast-err"
-        toast = f'<div class="toast {cls}">{msg}</div>'
-
-    if active_tab == "dashboard":
-        body = render_dashboard(state) + render_alerts(state)
-    elif active_tab == "instances":
-        body = render_instances(state, fleet)
-    elif active_tab == "cost":
-        body = render_cost(state, cost)
-    else:
-        body = ""
-
-    return f"""<!DOCTYPE html>
-<html lang="zh">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AutoDL Manager</title>
-<style>{STYLE}</style>
-</head>
-<body>
-<div class="sidebar">
-  <div class="logo">AutoDL Manager</div>
-  {nav}
-  <div class="nav-section">操作</div>
-  <form method="post" action="/action/sync?page=instances" style="padding:0 20px;margin-bottom:6px">
-    <button class="btn btn-primary btn-sm" style="width:100%">同步 API</button>
-  </form>
-  {token_warn}
-</div>
-<div class="main">
-  {toast}
-  {body}
-</div>
-</body>
-</html>"""
+def _get_registry() -> InstanceRegistry:
+    global _registry
+    if _registry is None:
+        _registry = InstanceRegistry(get_db())
+    return _registry
 
 
-def _live_balance() -> dict:
-    if not _has_token():
-        return {}
+def _get_api() -> AutoDLAPI:
+    global _api
+    if _api is None:
+        config = _load_config()
+        token = config.get("auto_dl", {}).get("token", "")
+        _api = AutoDLAPI(token)
+    return _api
+
+
+def _get_collector() -> GPUCollector:
+    global _collector
+    if _collector is None:
+        config = _load_config()
+        _collector = GPUCollector(
+            config.get("ssh", {}).get("key_path", ""),
+            config.get("ssh", {}).get("user", "root"),
+        )
+    return _collector
+
+
+
+# ─── FastAPI App ───
+
+# 前端文件路径
+def _frontend_dir() -> Path:
+    """返回前端 dist 目录。支持多种部署模式。"""
+    import sys
+    candidates = []
+
+    # 1. 相对于可执行文件（优先级最高，方便热更新 dist/）
     try:
-        api, _, _, _, _ = _get_managers()
-        bal = api.get_balance()
-        api, state, _, _, _ = _get_managers()
-        state.write({"balance": {"assets_yuan": bal["assets_yuan"], "updated_at": bal.get("updated_at", "")}})
-        return bal
+        candidates.append(Path(sys.executable).parent / "dist")
     except Exception:
-        return {}
+        pass
 
+    # 2. 相对于 CWD（sidecar chdir 到 exe 所在目录后）
+    candidates.append(Path.cwd() / "dist")
 
-def render_dashboard(state: StateManager) -> str:
-    data = state.read()
-    uuid = data.get("current_instance_uuid")
-    inst = (data.get("instances") or {}).get(uuid) if uuid else None
-    gpu = data.get("gpu") or {}
-    session = data.get("session") or {}
+    # 3. 开发模式：相对于 api_server.py
+    candidates.append(Path(__file__).parent.parent / "dist")
 
-    live_bal = _live_balance()
-    cached_bal = data.get("balance") or {}
-    bal = live_bal if live_bal else cached_bal
+    # 4. PyInstaller: dist/ 作为 data 文件被打包到 sys._MEIPASS（最低优先级）
+    if getattr(sys, 'frozen', False):
+        candidates.append(Path(sys._MEIPASS) / "dist")
 
-    if not inst:
-        html = '<div class="card"><div class="empty">未设置当前实例<br><small>请到「实例管理」中选择实例</small></div></div>'
-        if bal:
-            html += f'<div class="card"><div class="metrics"><div class="metric"><div class="value">¥{bal.get("assets_yuan","?.??")}</div><div class="label">当前余额</div></div></div></div>'
-        return html
+    for p in candidates:
+        if (p / "index.html").exists():
+            return p
+    return candidates[0]  # 返回第一个作为默认值
 
-    html = f"""
-    <div class="card">
-      <div class="card-header">
-        <h2>{inst.get('instance_name') or uuid[:14]} {_badge(inst.get('status','?'))}</h2>
-        <form method="post" action="/action/refresh-gpu?page=dashboard">
-          <button class="btn btn-sm">刷新 GPU</button>
-        </form>
-      </div>
-      <div class="metrics">
-        <div class="metric"><div class="value">{gpu.get('util_percent','?')}%</div><div class="label">GPU 利用率</div></div>
-        <div class="metric"><div class="value">{gpu.get('mem_used_gb','?')}/{gpu.get('mem_total_gb','?')}G</div><div class="label">显存</div></div>
-        <div class="metric"><div class="value">{gpu.get('temp_c','?')}°C</div><div class="label">温度</div></div>
-        <div class="metric"><div class="value">¥{bal.get('assets_yuan','?.??')}</div><div class="label">余额</div></div>
-      </div>
-      <div class="info-row">
-        <span>GPU: {inst.get('gpu_type','?')}</span><span>区域: {inst.get('region_sign','?')}</span><span>单价: ¥{inst.get('payg_price','?')}/h</span>
-      </div>
-      <div class="info-row">
-        <span>SSH: {inst.get('ssh_command','?')}</span>
-      </div>
-    """
-    if session.get("task"):
-        html += f'<div class="info-row"><span style="color:#58a6ff;">任务: {session["task"]} | 进度: {session.get("task_progress","-")}</span></div>'
-    html += "</div>"
-    return html
-
-
-def render_instances(state: StateManager, fleet) -> str:
-    data = state.read()
-    instances = list((data.get("instances") or {}).values())
-    current_uuid = data.get("current_instance_uuid")
-
-    html = f"""
-    <div class="card">
-      <div class="card-header">
-        <h2>实例列表 ({len(instances)})</h2>
-      </div>
-    """
-
-    if not instances:
-        html += '<div class="empty">暂无实例<br><small>点击左侧「同步 API」从 AutoDL 拉取</small></div></div>'
-        return html
-
-    rows = []
-    for i in instances:
-        i_uuid = i.get("instance_uuid", "")
-        short_uuid = i_uuid[:14]
-        name = i.get("instance_name") or "-"
-        gpu = i.get("gpu_type", "?")
-        region = i.get("region_sign", "?")
-        status = i.get("status", "?")
-        price = i.get("payg_price", 0) or 0
-        is_current = i_uuid and i_uuid == current_uuid
-        marker = " ★" if is_current else ""
-
-        actions = ""
-        if not is_current and i_uuid:
-            actions += f'<form method="post" action="/action/use?page=instances" style="display:inline"><input type="hidden" name="id" value="{i_uuid}"><button class="btn btn-sm">切换</button></form> '
-        if status == "stopped" and i_uuid:
-            actions += f'<form method="post" action="/action/start?page=instances" style="display:inline"><input type="hidden" name="id" value="{i_uuid}"><button class="btn btn-primary btn-sm">开机</button></form> '
-        if status == "running" and i_uuid:
-            actions += f'<form method="post" action="/action/stop?page=instances" style="display:inline"><input type="hidden" name="id" value="{i_uuid}"><button class="btn btn-danger btn-sm">关机</button></form> '
-
-        rows.append(f"<tr><td>{_badge(status)}</td><td>{short_uuid}</td><td>{name}{marker}</td><td>{gpu}</td><td>{region}</td><td>¥{price}/h</td><td>{actions}</td></tr>")
-
-    html += f"""<table><thead><tr><th>状态</th><th>UUID</th><th>名称</th><th>GPU</th><th>区域</th><th>单价</th><th>操作</th></tr></thead>
-    <tbody>{''.join(rows)}</tbody></table></div>"""
-    return html
-
-
-def render_alerts(state: StateManager) -> str:
-    alerts = state.read().get("alerts", [])
-    active = [a for a in alerts if not a.get("dismissed")]
-    html = '<div class="card"><div class="card-header"><h2>告警</h2></div>'
-    if not active:
-        html += '<div class="empty">无活跃告警</div>'
-    else:
-        for a in active[-5:]:
-            sev = a.get("severity", "info")
-            html += f'<div class="alert alert-{sev}">{a.get("message","")}</div>'
-    html += "</div>"
-    return html
-
-
-def render_cost(state: StateManager, cost_tracker) -> str:
-    daily = cost_tracker.get_daily_total()
-    weekly = cost_tracker.get_weekly_total()
-    runway = cost_tracker.predict_runway()
-
-    live_bal = _live_balance()
-    cached_bal = state.read().get("balance") or {}
-    bal = live_bal if live_bal else cached_bal
-
-    return f"""
-    <div class="card">
-      <div class="card-header"><h2>费用概览</h2></div>
-      <div class="metrics">
-        <div class="metric"><div class="value">¥{daily:.2f}</div><div class="label">今日消费</div></div>
-        <div class="metric"><div class="value">¥{weekly:.2f}</div><div class="label">本周消费</div></div>
-        <div class="metric"><div class="value">¥{bal.get('assets_yuan','?.??')}</div><div class="label">余额</div></div>
-        <div class="metric"><div class="value">{runway.get('runway_days','?')}</div><div class="label">预估剩余 天</div></div>
-      </div>
-      <div class="info-row">
-        <span>日均消费: ¥{runway.get('daily_rate_yuan',0):.2f}</span>
-      </div>
-    </div>
-    """
+FRONTEND_PATH = _frontend_dir() / "index.html"
+STATIC_DIR = _frontend_dir() / "assets"
 
 
 def create_app() -> FastAPI:
     app = FastAPI(title="AutoDL Manager")
 
+    # 静态文件（Vue 打包后的 JS/CSS）
+    if STATIC_DIR.exists():
+        app.mount("/assets", StaticFiles(directory=str(STATIC_DIR)), name="assets")
+
+    # ─── 页面 ───
+
     @app.get("/", response_class=HTMLResponse)
-    async def index(request: Request):
-        page = request.query_params.get("page", "dashboard")
-        return render_page(page)
+    async def index():
+        if FRONTEND_PATH.exists():
+            return HTMLResponse(FRONTEND_PATH.read_text(encoding="utf-8"))
+        return HTMLResponse("<h1>Frontend not found</h1>")
 
+    # ─── REST API: 实例 ───
 
-    @app.post("/action/sync", response_class=HTMLResponse)
-    async def action_sync(request: Request):
-        page = request.query_params.get("page", "instances")
-        if not _has_token():
-            return render_page(page, "未配置 Token，无法同步 API", False)
-        api, state, fleet, _, _ = _get_managers()
+    @app.get("/api/instances")
+    async def list_instances(source: Optional[str] = Query(None)):
+        reg = _get_registry()
+        instances = reg.list_all(source)
+        return {"instances": instances, "stats": reg.stats()}
+
+    @app.post("/api/instances/register")
+    async def register_instance(request: Request):
+        # WebView2 在 Windows 中文环境下可能发送 GBK 编码的 JSON，
+        # 需要手动解码而不是依赖 Starlette 的 UTF-8 默认解码
+        body_bytes = await request.body()
         try:
-            fleet.sync_from_api()
-            bal = api.get_balance()
-            state.write({"balance": {"assets_yuan": bal["assets_yuan"], "accumulate_yuan": bal["accumulate_yuan"], "updated_at": ""}})
-            instances = list(state.read().get("instances", {}).values())
-            return render_page(page, f"同步成功，共 {len(instances)} 个实例，余额 ¥{bal['assets_yuan']:.2f}")
-        except Exception as e:
-            return render_page(page, f"同步失败: {e}", False)
+            body = json.loads(body_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            body = json.loads(body_bytes.decode("gbk", errors="replace"))
 
-    @app.post("/action/use", response_class=HTMLResponse)
-    async def action_use(request: Request, id: str = Form(...)):
-        page = request.query_params.get("page", "instances")
-        api, state, fleet, _, _ = _get_managers()
+        reg = _get_registry()
+        source = body.get("source", "web")
+
+        if source == "pro":
+            uuid = body.get("uuid", "")
+            if not uuid:
+                return JSONResponse({"error": "uuid 必填"}, 400)
+            inst = reg.register_pro(uuid, body.get("detail"))
+            _sse_broadcast("instance_registered", inst)
+            return {"instance": inst}
+
+        elif source == "web":
+            ssh_host = body.get("ssh_host", "")
+            if not ssh_host:
+                return JSONResponse({"error": "ssh_host 必填"}, 400)
+            inst = reg.register_web(
+                ssh_host=ssh_host,
+                ssh_port=body.get("ssh_port", 22),
+                ssh_user=body.get("ssh_user", "root"),
+                ssh_key_path=body.get("ssh_key_path", ""),
+                ssh_password=body.get("ssh_password", ""),
+                alias=body.get("alias", ""),
+                gpu_type=body.get("gpu_type", ""),
+                region=body.get("region", ""),
+                price_per_hour=body.get("price_per_hour", 0.0),
+                tags=body.get("tags"),
+                status=body.get("status", "stopped"),
+            )
+            _sse_broadcast("instance_registered", inst)
+            return {"instance": inst}
+
+        elif source == "ssh":
+            host = body.get("host", "")
+            if not host:
+                return JSONResponse({"error": "host 必填"}, 400)
+            inst = reg.register_ssh(
+                host=host,
+                port=body.get("port", 22),
+                username=body.get("username", "root"),
+                key_filename=body.get("key_filename", ""),
+                password=body.get("password", ""),
+                alias=body.get("alias", ""),
+                gpu_type=body.get("gpu_type", ""),
+                tags=body.get("tags"),
+            )
+            _sse_broadcast("instance_registered", inst)
+            return {"instance": inst}
+
+        return JSONResponse({"error": f"不支持的 source: {source}"}, 400)
+
+    @app.delete("/api/instances/{uuid}")
+    async def delete_instance(uuid: str):
+        reg = _get_registry()
+        ok = reg.unregister(uuid)
+        if not ok:
+            return JSONResponse({"error": "实例不存在"}, 404)
+        _sse_broadcast("instance_removed", {"uuid": uuid})
+        return {"ok": True}
+
+    @app.put("/api/instances/{uuid}")
+    async def update_instance(uuid: str, request: Request):
+        body = await request.json()
+        reg = _get_registry()
+        inst = reg.get(uuid)
+        if not inst:
+            return JSONResponse({"error": "实例不存在"}, 404)
+        alias = body.get("alias")
+        tags = body.get("tags")
+        if alias is not None or tags is not None:
+            reg.update_alias(uuid, alias or inst.get("alias", ""), tags)
+        return {"instance": reg.get(uuid)}
+
+    @app.post("/api/instances/{uuid}/set-current")
+    async def set_current(uuid: str):
+        reg = _get_registry()
         try:
-            fleet.switch_to(id)
-            return render_page(page, f"已切换实例 {id[:14]}")
-        except Exception as e:
-            return render_page(page, str(e), False)
+            reg.set_current(uuid)
+            _sse_broadcast("current_changed", {"uuid": uuid})
+            return {"ok": True}
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 404)
 
-    @app.post("/action/start", response_class=HTMLResponse)
-    async def action_start(request: Request, id: str = Form(...)):
-        page = request.query_params.get("page", "instances")
-        if not _has_token():
-            return render_page(page, "未配置 Token", False)
-        api, state, fleet, _, _ = _get_managers()
+    @app.post("/api/instances/{uuid}/probe")
+    async def probe_instance(uuid: str):
+        reg = _get_registry()
+        result = reg.probe_ssh(uuid)
+        if result.get("reachable"):
+            _sse_broadcast("instance_probed", {"uuid": uuid, **result})
+        _sse_broadcast("instance_status", {"uuid": uuid, "status": result.get("status", "unknown")})
+        return result
+
+    # ─── SSH 实例电源管理 ───
+
+    @app.post("/api/instances/{uuid}/shutdown")
+    def shutdown_instance(uuid: str):
+        """通过 SSH 关机。"""
+        reg = _get_registry()
+        inst = reg.get(uuid)
+        if not inst:
+            return JSONResponse({"error": "实例不存在"}, 404)
+        host = inst.get("ssh_host", "")
+        if not host:
+            return JSONResponse({"error": "SSH host 未配置"}, 400)
+
+        password = inst.get("ssh_password", "") or ""
+        key = inst.get("ssh_key_path", "") or ""
+        if not password and not key:
+            return JSONResponse({"error": "需要 SSH 密码或密钥"}, 400)
+
         try:
-            fleet.start_instance(id)
-            return render_page(page, f"开机指令已发送 {id[:14]}")
+            client = paramiko.SSHClient()
+            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            kwargs = {"hostname": host, "port": inst.get("ssh_port", 22),
+                      "username": inst.get("ssh_user", "root"), "timeout": 10}
+            if key: kwargs["key_filename"] = key
+            else: kwargs["password"] = password
+            client.connect(**kwargs)
+            client.exec_command("shutdown -h now", timeout=5)
+            client.close()
+            reg.update_status(uuid, "stopped")
+            _sse_broadcast("instance_status", {"uuid": uuid, "status": "stopped"})
+            return {"ok": True, "message": "关机指令已发送"}
         except Exception as e:
-            return render_page(page, str(e), False)
+            return {"ok": False, "error": str(e)}
 
-    @app.post("/action/stop", response_class=HTMLResponse)
-    async def action_stop(request: Request, id: str = Form(...)):
-        page = request.query_params.get("page", "instances")
-        if not _has_token():
-            return render_page(page, "未配置 Token", False)
-        api, state, fleet, _, _ = _get_managers()
+    @app.post("/api/instances/{uuid}/reboot")
+    def reboot_instance(uuid: str):
+        """通过 SSH 重启。"""
+        reg = _get_registry()
+        inst = reg.get(uuid)
+        if not inst:
+            return JSONResponse({"error": "实例不存在"}, 404)
+        host = inst.get("ssh_host", "")
+        if not host:
+            return JSONResponse({"error": "SSH host 未配置"}, 400)
+
+        password = inst.get("ssh_password", "") or ""
+        key = inst.get("ssh_key_path", "") or ""
+        if not password and not key:
+            return JSONResponse({"error": "需要 SSH 密码或密钥"}, 400)
+
         try:
-            fleet.stop_instance(id)
-            return render_page(page, f"关机指令已发送 {id[:14]}")
+            client = paramiko.SSHClient()
+            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            kwargs = {"hostname": host, "port": inst.get("ssh_port", 22),
+                      "username": inst.get("ssh_user", "root"), "timeout": 10}
+            if key: kwargs["key_filename"] = key
+            else: kwargs["password"] = password
+            client.connect(**kwargs)
+            client.exec_command("reboot", timeout=5)
+            client.close()
+            _sse_broadcast("instance_status", {"uuid": uuid, "status": "powering_off"})
+            return {"ok": True, "message": "重启指令已发送"}
         except Exception as e:
-            return render_page(page, str(e), False)
+            return {"ok": False, "error": str(e)}
 
-    @app.post("/action/refresh-gpu", response_class=HTMLResponse)
-    async def action_refresh_gpu(request: Request):
-        page = request.query_params.get("page", "dashboard")
+    @app.get("/api/instances/{uuid}/gpu")
+    async def get_instance_gpu(uuid: str):
+        """主动采集一次 GPU 数据。"""
+        reg = _get_registry()
+        inst = reg.get(uuid)
+        if not inst:
+            return JSONResponse({"error": "实例不存在"}, 404)
+        host = inst.get("ssh_host", "")
+        port = inst.get("ssh_port", 22)
+        if not host:
+            return JSONResponse({"error": "SSH host 未配置"}, 400)
+        collector = _get_collector()
+        result = collector.collect(host, port)
+        if result:
+            reg.db.insert_gpu_snapshot(uuid, result)
+            _sse_broadcast("gpu", {"uuid": uuid, **result})
+            return result
+        return JSONResponse({"error": "GPU 采集失败，SSH 不可达"}, 503)
+
+    # ─── REST API: Pro API 同步 ───
+
+    @app.post("/api/pro/sync")
+    def sync_pro_instances():
         if not _has_token():
-            return render_page(page, "未配置 Token，无法获取实时数据", False)
-        api, state, fleet, _, _ = _get_managers()
-        current = fleet.get_current()
-        if current and current.get("status") == "running":
-            from .gpu_collector import GPUCollector
-            config = _load_config()
-            g = GPUCollector(config.get("ssh", {}).get("key_path", ""), config.get("ssh", {}).get("user", "root"))
-            result = g.collect(current.get("ssh_host", ""), current.get("ssh_port", 22))
-            if result:
-                state.update_gpu_snapshot(current["instance_uuid"], result)
-                return render_page(page, "GPU 数据已刷新")
-            return render_page(page, "SSH 连接失败", False)
-        return render_page(page, "当前无运行中的实例", False)
+            return JSONResponse({"error": "Token 未配置"}, 400)
+        try:
+            api = _get_api()
+            raw = api.list_instances()
+            reg = _get_registry()
+            count = 0
+            for inst in raw:
+                uid = inst.get("uuid") or inst.get("instance_uuid", "")
+                if not uid:
+                    continue
+                try:
+                    detail = api.get_instance_detail(uid)
+                except Exception:
+                    detail = {}
+                inst["proxy_host"] = detail.get("proxy_host", "")
+                inst["ssh_port"] = detail.get("ssh_port", 22)
+                inst["payg_price"] = detail.get("payg_price", 0)
+                price = inst.get("payg_price", 0)
+                if price > 100:
+                    price = round(price / 100.0, 2)
+                reg.register_pro(uid, {
+                    "status": inst.get("status", "unknown"),
+                    "gpu_type": inst.get("gpu_type", inst.get("gpu_spec_uuid", "")),
+                    "region_sign": inst.get("region_sign", ""),
+                    "payg_price": price,
+                    "proxy_host": inst.get("proxy_host", ""),
+                    "ssh_port": inst.get("ssh_port", 22),
+                    "instance_name": inst.get("instance_name", inst.get("name", "")),
+                })
+                count += 1
 
-    @app.get("/api/full")
-    async def api_full():
-        _, state, _, _, _ = _get_managers()
-        return JSONResponse(state.read())
+            _sse_broadcast("pro_synced", {"count": count})
+            return {"ok": True, "synced": count}
+        except AutoDLAPIError as e:
+            return JSONResponse({"error": str(e), "request_id": e.request_id}, 500)
+
+    @app.post("/api/pro/instances/{uuid}/power_on")
+    def pro_power_on(uuid: str):
+        if not _has_token():
+            return JSONResponse({"error": "Token 未配置"}, 400)
+        try:
+            _get_api().power_on(uuid)
+            reg = _get_registry()
+            reg.update_status(uuid, "powering_on")
+            _sse_broadcast("instance_status", {"uuid": uuid, "status": "powering_on"})
+            return {"ok": True}
+        except AutoDLAPIError as e:
+            return JSONResponse({"error": str(e)}, 500)
+
+    @app.post("/api/pro/instances/{uuid}/power_off")
+    async def pro_power_off(uuid: str):
+        if not _has_token():
+            return JSONResponse({"error": "Token 未配置"}, 400)
+        try:
+            _get_api().power_off(uuid)
+            reg = _get_registry()
+            reg.update_status(uuid, "powering_off")
+            _sse_broadcast("instance_status", {"uuid": uuid, "status": "powering_off"})
+            return {"ok": True}
+        except AutoDLAPIError as e:
+            return JSONResponse({"error": str(e)}, 500)
+
+    @app.post("/api/pro/instances/{uuid}/release")
+    def pro_release(uuid: str):
+        if not _has_token():
+            return JSONResponse({"error": "Token 未配置"}, 400)
+        try:
+            _get_api().release_instance(uuid)
+            reg = _get_registry()
+            reg.unregister(uuid)
+            _sse_broadcast("instance_removed", {"uuid": uuid})
+            return {"ok": True}
+        except AutoDLAPIError as e:
+            return JSONResponse({"error": str(e)}, 500)
+
+    @app.get("/api/balance")
+    def get_balance():
+        if not _has_token():
+            return JSONResponse({"error": "Token 未配置"}, 400)
+        try:
+            bal = _get_api().get_balance()
+            return bal
+        except AutoDLAPIError as e:
+            return JSONResponse({"error": str(e)}, 500)
+
+    # ─── REST API: 费用（带缓存，避免每次刷新都调 AutoDL API）───
+
+    _cost_cache: dict = {"ts": 0, "data": None}
+
+    @app.get("/api/cost")
+    def cost_summary(refresh: str = "0"):
+        global _cost_cache
+        now = time.time()
+        # 缓存 30 秒，传 refresh=1 强制刷新
+        if refresh != "1" and _cost_cache["data"] is not None and (now - _cost_cache["ts"]) < 30:
+            return _cost_cache["data"]
+
+        db = get_db()
+        bal_data = {"assets_yuan": 0.0, "accumulate_yuan": 0.0, "voucher_balance": 0.0}
+        if _has_token():
+            try:
+                api = _get_api()
+                raw = api.get_balance()
+                bal_data["assets_yuan"] = raw.get("assets_yuan", 0)
+                bal_data["accumulate_yuan"] = raw.get("accumulate_yuan", 0)
+                bal_data["voucher_balance"] = raw.get("voucher_balance", 0)
+            except Exception:
+                if _cost_cache["data"] is not None:
+                    bal_data["assets_yuan"] = _cost_cache["data"].get("balance_yuan", 0)
+                    bal_data["accumulate_yuan"] = _cost_cache["data"].get("total_spent", 0)
+
+        runway = db.predict_runway(bal_data["assets_yuan"])
+        result = {
+            **runway,
+            "total_spent": bal_data["accumulate_yuan"],
+            "voucher_balance": bal_data["voucher_balance"],
+        }
+        _cost_cache = {"ts": now, "data": result}
+        return result
+
+    # ─── REST API: 告警 ───
+
+    @app.get("/api/alerts")
+    async def get_alerts(instance_uuid: Optional[str] = Query(None)):
+        db = get_db()
+        return {"alerts": db.get_active_alerts(instance_uuid)}
+
+    @app.post("/api/alerts/{alert_id}/dismiss")
+    async def dismiss_alert(alert_id: str):
+        db = get_db()
+        db.dismiss_alert(alert_id)
+        return {"ok": True}
+
+    # ─── REST API: 统计 ───
+
+    @app.get("/api/stats")
+    async def get_stats():
+        reg = _get_registry()
+        return reg.stats()
+
+    # ─── REST API: GPU 数据 ───
+
+    @app.get("/api/gpu-types")
+    def get_gpu_types(source: str = "web"):
+        """返回 GPU 型号列表及参考价格。web=Web控制台, pro=Pro API"""
+        types = GPU_TYPES if source != "pro" else PRO_GPU_TYPES
+        return {"gpu_types": types}
+
+    @app.get("/api/regions")
+    def get_regions():
+        return {"regions": REGIONS}
+
+    # ─── SSH 连接字符串解析 ───
+
+    @app.post("/api/parse-ssh")
+    async def parse_ssh_string(request: Request):
+        """解析 AutoDL SSH 连接字符串。输入: 'ssh -p 50479 root@connect.bjb2.seetacloud.com'"""
+        import re
+        raw = ""
+        try:
+            body_bytes = await request.body()
+            # 尝试 UTF-8，失败则尝试 GBK
+            try:
+                body_str = body_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                body_str = body_bytes.decode("gbk", errors="replace")
+            import json as _json
+            body = _json.loads(body_str)
+            raw = body.get("ssh_string", "").strip()
+        except Exception:
+            pass
+
+        if not raw:
+            return JSONResponse({"error": "请提供 SSH 连接字符串"}, 400)
+
+        host = ""
+        port = 22
+        user = "root"
+
+        # 匹配 -p PORT
+        port_match = re.search(r"-p\s+(\d+)", raw)
+        if port_match:
+            port = int(port_match.group(1))
+
+        # 找 user@host 部分（通常在最后）
+        # 提取最后一个包含 @ 的token，或者最后一段
+        tokens = raw.split()
+        user_host_token = ""
+        for t in reversed(tokens):
+            if "@" in t:
+                user_host_token = t
+                break
+        if not user_host_token and tokens:
+            # 尝试最后一段作为 host
+            user_host_token = tokens[-1]
+
+        if "@" in user_host_token:
+            u, h = user_host_token.rsplit("@", 1)
+            user = u or "root"
+            host = h.rstrip(".")
+        else:
+            host = user_host_token.rstrip(".")
+
+        return {"host": host, "port": port, "user": user, "original": raw}
+
+    # ─── REST API: 设置 ───
+
+    @app.get("/api/settings")
+    async def get_settings():
+        config = _load_config()
+        return {
+            "token": config.get("auto_dl", {}).get("token", ""),
+            "ssh_key": config.get("ssh", {}).get("key_path", ""),
+            "ssh_user": config.get("ssh", {}).get("user", "root"),
+        }
+
+    @app.post("/api/settings")
+    async def save_settings(request: Request):
+        body = await request.json()
+        config_path = Path(__file__).parent.parent / "config.yaml"
+
+        current = {}
+        if config_path.exists():
+            with open(config_path, "r", encoding="utf-8") as f:
+                current = yaml.safe_load(f) or {}
+
+        if "token" in body:
+            current.setdefault("auto_dl", {})["token"] = body["token"]
+        if "ssh_key" in body:
+            current.setdefault("ssh", {})["key_path"] = body["ssh_key"]
+        if "ssh_user" in body:
+            current.setdefault("ssh", {})["user"] = body["ssh_user"]
+
+        with open(config_path, "w", encoding="utf-8") as f:
+            yaml.dump(current, f, allow_unicode=True, default_flow_style=False)
+
+        # 清除缓存，下次调用即使用新 token
+        global _api
+        _api = None
+
+        _sse_broadcast("settings_updated", {"ok": True})
+        return {"ok": True}
+
+    # ─── SSE 实时流 ───
+
+    @app.get("/api/stream")
+    async def sse_stream():
+        q: queue.Queue = queue.Queue()
+        _sse_subscribers.append(q)
+
+        async def generate():
+            try:
+                yield f"event: connected\ndata: {json.dumps({'ok': True})}\n\n"
+                while True:
+                    try:
+                        msg = q.get(timeout=30)
+                        yield f"event: {msg['event']}\ndata: {json.dumps(msg['data'], ensure_ascii=False)}\n\n"
+                    except queue.Empty:
+                        yield f"event: ping\ndata: {json.dumps({'ts': time.time()})}\n\n"
+                    await asyncio.sleep(0.1)
+            except asyncio.CancelledError:
+                pass
+            finally:
+                if q in _sse_subscribers:
+                    _sse_subscribers.remove(q)
+
+        return StreamingResponse(generate(), media_type="text/event-stream")
+
+    # ─── 一键关机 ───
+
+    @app.post("/api/shutdown-all")
+    def shutdown_all():
+        reg = _get_registry()
+        running = reg.get_running()
+        results = []
+        for inst in running:
+            uuid = inst["uuid"]
+            try:
+                if inst.get("source") == "pro" and _has_token():
+                    _get_api().power_off(uuid)
+                reg.update_status(uuid, "powering_off")
+                results.append({"uuid": uuid, "ok": True})
+            except Exception as e:
+                results.append({"uuid": uuid, "ok": False, "error": str(e)})
+        _sse_broadcast("shutdown_all", {"results": results})
+        return {"results": results}
 
     return app
-
-
-def main():
-    import uvicorn
-    if not _has_token():
-        print("[WARN] config.yaml 未配置 Token")
-    app = create_app()
-    uvicorn.run(app, host="127.0.0.1", port=8899, log_level="warning")
-
-
-if __name__ == "__main__":
-    main()

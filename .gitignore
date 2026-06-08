@@ -1,23 +1,43 @@
-__pycache__/
-*.py[cod]
-*.egg-info/
-dist/
-build/
-*.spec
+# Dependencies
+node_modules/
 
-autodl_manager/data/*
+# Rust build
+src-tauri/target/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# PyInstaller temp
+build/
+
+# User data (contains tokens and passwords!)
+config.yaml
+autodl_manager/data/*.db
+autodl_manager/data/*.db-shm
+autodl_manager/data/*.db-wal
+autodl_manager/data/*.log
+autodl_manager/data/*.csv
+autodl_manager/data/state.json*
+
+# Keep data dir
 !autodl_manager/data/.gitkeep
 
-config.yaml
-config.toml
-.config.toml.lock
+# IDE
+.vscode/
+.idea/
+*.swp
 
-token.txt
-CLAUDE.md
-ONBOARDING_003.md
-DEVELOPMENT_PLAN.md
-run-cc-connect.bat
-.cc-connect/
+# OS
+.DS_Store
+Thumbs.db
 
-.env
+# Claude
+.claude/
+
+# Misc
 *.bak
+.env
+token.txt

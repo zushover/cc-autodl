@@ -20,7 +20,7 @@ class AutoDLAPI:
     def __init__(self, token: str):
         self.session = requests.Session()
         self.session.headers["Authorization"] = token
-        self.session.timeout = 30
+        self.session.timeout = 10
 
     def _request(self, method: str, path: str, **kwargs) -> dict:
         url = f"{self.BASE_URL}{path}"
@@ -28,7 +28,7 @@ class AutoDLAPI:
 
         for attempt in range(3):
             try:
-                resp = self.session.request(method, url, timeout=30, **kwargs)
+                resp = self.session.request(method, url, timeout=10, **kwargs)
                 break
             except requests.exceptions.RequestException as e:
                 if attempt == 2:

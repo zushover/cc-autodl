@@ -1,4 +1,5 @@
 import argparse
+import json
 import subprocess
 import sys
 import time
@@ -7,6 +8,8 @@ from pathlib import Path
 import yaml
 
 from .autodl_api import AutoDLAPI
+from .db import get_db
+from .instance_registry import InstanceRegistry
 from .state_manager import StateManager
 from .fleet_manager import FleetManager
 from .session_manager import SessionManager
@@ -24,9 +27,15 @@ STATUS_ICONS = {
 
 
 def _load_config() -> dict:
+    # 1. 开发模式：相对于源码目录
     config_path = Path(__file__).parent.parent / "config.yaml"
-    with open(config_path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+    # 2. PyInstaller frozen：exe 所在目录
+    frozen_path = Path.cwd() / "config.yaml"
+    for p in (config_path, frozen_path):
+        if p.exists():
+            with open(p, "r", encoding="utf-8") as f:
+                return yaml.safe_load(f)
+    raise FileNotFoundError(f"config.yaml 未找到 (查找: {config_path}, {frozen_path})")
 
 
 def _icon(s: str) -> str:
@@ -331,6 +340,132 @@ def cmd_exec(args, config: dict, fleet: FleetManager):
     if result.stderr:
         print(result.stderr)
 
+def cmd_register(args, config: dict):
+    """注册新实例（Web 控制台 / 自定义 SSH / Pro API）"""
+    reg = InstanceRegistry(get_db())
+
+    if args.source == "pro":
+        if not args.uuid:
+            print("Pro 实例 UUID 必填")
+            return
+        inst = reg.register_pro(args.uuid)
+        print(f"已注册 Pro 实例: {inst['uuid']}")
+        return
+
+    ssh_host = args.host or ""
+    if not ssh_host:
+        print("SSH 主机地址必填 (--host)")
+        return
+
+    ssh_key = args.ssh_key or config.get("ssh", {}).get("key_path", "")
+    tags = [t.strip() for t in args.tags.split(",")] if args.tags else []
+
+    if args.source == "web":
+        inst = reg.register_web(
+            ssh_host=ssh_host, ssh_port=args.port, ssh_user=args.user,
+            ssh_key_path=ssh_key, alias=args.alias,
+            gpu_type=args.gpu or "", region=args.region or "",
+            price_per_hour=args.price or 0.0, tags=tags,
+        )
+    else:
+        inst = reg.register_ssh(
+            host=ssh_host, port=args.port, username=args.user,
+            key_filename=ssh_key, alias=args.alias,
+            gpu_type=args.gpu or "", tags=tags,
+        )
+
+    print(f"已注册 {args.source} 实例: {inst['uuid']}")
+    print(f"  别名: {inst.get('alias', '')}  GPU: {inst.get('gpu_type', '?')}")
+    print(f"  SSH: {inst.get('ssh_user','root')}@{inst.get('ssh_host','')}:{inst.get('ssh_port',22)}")
+
+    if args.probe:
+        print("正在探测...")
+        result = reg.probe_ssh(inst["uuid"])
+        if result.get("reachable"):
+            gpu = result.get("gpu", {})
+            print(f"  ✅ 可达 · GPU: {gpu.get('gpu_name','?')} · Python: {result.get('python','?')}")
+        else:
+            print(f"  ❌ 不可达: {result.get('error','?')}")
+
+
+def cmd_probe(args, config: dict):
+    """SSH 探测实例"""
+    reg = InstanceRegistry(get_db())
+    uuid = args.identifier
+    if not uuid:
+        current = reg.get_current()
+        if not current:
+            print("请指定实例: autodl probe <uuid>")
+            return
+        uuid = current["uuid"]
+
+    print(f"正在探测 {uuid[:14]}...")
+    result = reg.probe_ssh(uuid)
+    if result.get("reachable"):
+        gpu = result.get("gpu", {})
+        print(f"✅ 可达")
+        print(f"   GPU: {gpu.get('gpu_name', '?')} ({gpu.get('mem_total_mb',0)}MB)")
+        print(f"   主机: {result.get('hostname', '?')}")
+        print(f"   Python: {result.get('python', '?')}")
+        print(f"   磁盘: {result.get('disk', '?')}")
+    else:
+        print(f"❌ 不可达: {result.get('error', '?')}")
+
+
+def cmd_stats(args):
+    """显示统计信息"""
+    reg = InstanceRegistry(get_db())
+    s = reg.stats()
+    print(f"总实例: {s['total']}  |  运行中: {s['running']}  |  已停止: {s['stopped']}")
+    print(f"来源: Web={s['by_source']['web']}  Pro={s['by_source']['pro']}  SSH={s['by_source']['ssh']}")
+
+    db = get_db()
+    current = reg.get_current()
+    if current:
+        latest = db.get_latest_gpu(current["uuid"])
+        print(f"\n当前实例: {current.get('alias') or current['uuid'][:14]}")
+        if latest:
+            print(f"  GPU: {latest.get('util_percent','?')}%  |  显存: {latest.get('mem_used_gb','?')}/{latest.get('mem_total_gb','?')}GB  |  温度: {latest.get('temp_c','?')}°C")
+
+
+def cmd_list_all(args, fleet: FleetManager):
+    """列出所有实例（Pro API + 本地注册）"""
+    if args.sync:
+        fleet.sync_from_api()
+    reg = InstanceRegistry(get_db())
+    instances = reg.list_all()
+    current = reg.get_current()
+    current_uuid = current["uuid"] if current else None
+
+    if not instances:
+        print("暂无实例。使用 autodl register --source web --host <host> 注册")
+        return
+
+    for inst in instances:
+        uuid = inst.get("uuid", "")[:14]
+        name = inst.get("alias", "-") or "-"
+        gpu = inst.get("gpu_type", "?")
+        region = inst.get("region", "?")
+        status = inst.get("status", "?")
+        source = inst.get("source", "?")
+        price = inst.get("price_per_hour", 0) or 0
+        marker = " ★" if inst["uuid"] == current_uuid else ""
+        tags_str = inst.get("tags", "[]")
+
+        status_icon = {"running": "\033[32m●\033[0m", "stopped": "\033[90m○\033[0m", "reachable": "\033[32m●\033[0m"}
+        icon = status_icon.get(status, "\033[90m○\033[0m") if status else "\033[90m○\033[0m"
+
+        print(f"  {icon} {source:5s}  {uuid:16s}  {gpu:12s}  {region:8s}  ¥{price}/h  {name}{marker}")
+        if tags_str and tags_str != "[]":
+            try:
+                tags = json.loads(tags_str)
+                print(f"  {'':7s}  {'':16s}  标签: {','.join(tags)}")
+            except Exception:
+                pass
+
+    s = reg.stats()
+    print(f"\n{s['running']} 运行中, {s['stopped']} 已停止, {s['total']} 总计")
+
 
 
 def main():
@@ -378,6 +513,26 @@ def main():
     p_exec = sub.add_parser("exec", help="在实例上执行命令")
     p_exec.add_argument("command", help="Shell 命令")
 
+    # --- 新命令：三种来源注册 + 探测 ---
+    p_register = sub.add_parser("register", help="注册实例（Web/SSH/Pro）")
+    p_register.add_argument("--source", default="web", choices=["web", "ssh", "pro"], help="来源类型")
+    p_register.add_argument("--host", help="SSH 主机地址")
+    p_register.add_argument("--port", type=int, default=22, help="SSH 端口")
+    p_register.add_argument("--user", default="root", help="SSH 用户名")
+    p_register.add_argument("--ssh-key", help="SSH 私钥路径")
+    p_register.add_argument("--alias", default="", help="别名")
+    p_register.add_argument("--gpu", help="GPU 型号")
+    p_register.add_argument("--region", default="", help="区域")
+    p_register.add_argument("--price", type=float, help="单价")
+    p_register.add_argument("--tags", default="", help="标签（逗号分隔）")
+    p_register.add_argument("--uuid", help="Pro 实例 UUID (source=pro 时使用)")
+    p_register.add_argument("--probe", action="store_true", help="注册后立即探测")
+
+    p_probe = sub.add_parser("probe", help="SSH 探测实例")
+    p_probe.add_argument("identifier", nargs="?", help="实例 uuid")
+
+    sub.add_parser("stats", help="显示统计信息")
+
     args = parser.parse_args()
     if not args.command:
         parser.print_help()
@@ -385,7 +540,11 @@ def main():
 
     config = _load_config()
     token = config.get("auto_dl", {}).get("token", "")
-    if not token or token == "your-token-here":
+
+    # Token 仅在 Pro API 操作时必须。Web/SSH 注册和基础操作不需要。
+    needs_token = args.command in ("sync", "balance", "run", "snapshot", "snapshots")
+
+    if needs_token and (not token or token == "your-token-here"):
         print("请在 config.yaml 中填入 AutoDL Token")
         sys.exit(1)
 
@@ -398,7 +557,7 @@ def main():
     cost_tracker = CostTracker(state)
 
     fleet_handlers = {
-        "list": lambda a: cmd_list(a, fleet),
+        "list": lambda a: cmd_list_all(a, fleet),
         "use": lambda a: cmd_use(a, fleet),
         "status": lambda a: cmd_status(a, fleet),
         "start": lambda a: cmd_start(a, fleet),
@@ -407,6 +566,9 @@ def main():
         "sync": lambda a: cmd_sync(a, fleet),
         "balance": lambda a: cmd_balance(a, fleet),
         "cost": lambda a: cmd_cost(a, fleet, cost_tracker),
+        "register": lambda a: cmd_register(a, config),
+        "probe": lambda a: cmd_probe(a, config),
+        "stats": lambda a: cmd_stats(a),
     }
 
     pipeline_handlers = {
