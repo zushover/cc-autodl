@@ -139,13 +139,14 @@ async function sendAgentQuery(text?: string) {
             answerText += data.content
             const lastIdx = conv.steps.length - 1
             if (lastIdx >= 0 && conv.steps[lastIdx].type === 'answer') {
-              // 替换整个 step 触发 Vue 响应
               const updated = [...conv.steps]
               updated[lastIdx] = { ...updated[lastIdx], content: answerText }
               conv.steps = updated
             } else {
               conv.steps = [...conv.steps, { id: Date.now(), timestamp: now, type: 'answer', content: answerText }]
             }
+            // 每个 text 事件后让 Vue 渲染
+            await new Promise(r => requestAnimationFrame(r))
           } else if (data.type === 'done') {
             if (data.answer) {
               const lastIdx2 = conv.steps.length - 1
@@ -162,8 +163,6 @@ async function sendAgentQuery(text?: string) {
           }
         } catch (_) { /* skip */ }
       }
-      // 让 Vue 有机会渲染
-      await new Promise(r => setTimeout(r, 0))
     }
   } catch (e: unknown) {
     conv.steps = conv.steps.filter(s => s.id !== tid)
@@ -172,6 +171,18 @@ async function sendAgentQuery(text?: string) {
 
   agentLoading.value = false
   refreshAgentMemory()
+
+  // 对话自动存入 ChromaDB 共享记忆
+  const finalAnswer = conv.steps.find(s => s.type === 'answer')?.content || ''
+  if (finalAnswer) {
+    try {
+      await fetch('http://127.0.0.1:8899/api/memory/conversations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+        body: JSON.stringify({ user_msg: q, agent_response: finalAnswer, metadata: { source: 'ai-agents-panel' } }),
+      })
+    } catch (_) { /* ignore */ }
+  }
 }
 
 async function refreshAgentMemory() {
