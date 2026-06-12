@@ -175,39 +175,39 @@ const rings = [
 /* GPU 加速 */
 .orbit { will-change: transform; backface-visibility: hidden; }
 
-/* 基础旋转 */
-.ring-0 { animation: orb30 30s linear infinite; }
-.ring-1 { animation: orb22 22s linear infinite; }
-.ring-2 { animation: orb16 16s linear infinite; }
-.ring-3 { animation: orb12 12s linear infinite; }
+/* 基础旋转 — 1秒丝滑旋转 */
+.ring-0 { animation: orb4 4s linear infinite; }
+.ring-1 { animation: orb3 3s linear infinite; }
+.ring-2 { animation: orb2 2s linear infinite; }
+.ring-3 { animation: orb1 1.5s linear infinite; }
 
-@keyframes orb30 { to { transform: rotate(360deg); } }
-@keyframes orb22 { to { transform: rotate(360deg); } }
-@keyframes orb16 { to { transform: rotate(360deg); } }
-@keyframes orb12 { to { transform: rotate(360deg); } }
+@keyframes orb4 { to { transform: rotate(360deg); } }
+@keyframes orb3 { to { transform: rotate(360deg); } }
+@keyframes orb2 { to { transform: rotate(360deg); } }
+@keyframes orb1 { to { transform: rotate(360deg); } }
 
-/* 汇聚 */
-.active .ring-0 { animation: orb30 30s linear infinite, shrinkR 0.7s ease-in 3s forwards; }
-.active .ring-1 { animation: orb22 22s linear infinite, shrinkR 0.6s ease-in 3.15s forwards; }
-.active .ring-2 { animation: orb16 16s linear infinite, shrinkR 0.5s ease-in 3.3s forwards; }
-.active .ring-3 { animation: orb12 12s linear infinite, shrinkR 0.4s ease-in 3.45s forwards; }
+/* 汇聚 — 1s后开始 */
+.active .ring-0 { animation: orb4 4s linear infinite, shrinkR 0.5s ease-in 1.0s forwards; }
+.active .ring-1 { animation: orb3 3s linear infinite, shrinkR 0.4s ease-in 1.1s forwards; }
+.active .ring-2 { animation: orb2 2s linear infinite, shrinkR 0.3s ease-in 1.2s forwards; }
+.active .ring-3 { animation: orb1 1.5s linear infinite, shrinkR 0.25s ease-in 1.3s forwards; }
 @keyframes shrinkR { to { transform: scale(0); opacity: 0; } }
 
-/* logo 弹入 */
+/* logo 弹入 — 1.4s */
 .active .final-logo {
-  animation: popIn 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) 3.5s forwards;
+  animation: popIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) 1.4s forwards;
 }
 @keyframes popIn {
-  0% { opacity: 0; transform: scale(0.2) rotate(-15deg); }
+  0% { opacity: 0; transform: scale(0.2) rotate(-10deg); }
   100% { opacity: 1; transform: scale(1) rotate(0deg); }
 }
 
-/* 文字浮现 */
+/* 文字浮现 — 1.7s */
 .active + .brand-text {
-  animation: fadeIn 0.5s ease-out 3.8s forwards;
+  animation: fadeIn 0.4s ease-out 1.7s forwards;
 }
 .active + .brand-text + .brand-sub {
-  animation: fadeIn 0.5s ease-out 4.0s forwards;
+  animation: fadeIn 0.4s ease-out 1.85s forwards;
 }
 @keyframes fadeIn { to { opacity: 1; transform: translateY(0); } }
 

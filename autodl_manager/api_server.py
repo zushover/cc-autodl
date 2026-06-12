@@ -452,7 +452,7 @@ def create_app() -> FastAPI:
             r = req.get(
                 "https://api.deepseek.com/user/balance",
                 headers={"Accept": "application/json", "Authorization": f"Bearer {api_key}"},
-                timeout=10,
+                timeout=5,
             )
             data = r.json()
             infos = data.get("balance_infos", [])
