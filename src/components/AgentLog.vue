@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, nextTick, watch, computed } from 'vue'
+import { ref, nextTick, watch, computed, onMounted } from 'vue'
 
 interface AgentStep {
   id: number; timestamp: string; type: string; content: string; toolName?: string
@@ -22,6 +22,14 @@ const emit = defineEmits<{
 
 const logEl = ref<HTMLElement | null>()
 const hasSent = computed(() => props.conversations.length > 0)
+const showAnim = ref(false)
+
+onMounted(() => {
+  // 确保组件挂载后再启动动画，避免首帧卡顿
+  requestAnimationFrame(() => {
+    showAnim.value = true
+  })
+})
 
 function doSend(text?: string) {
   emit('send', text || props.query)
@@ -31,12 +39,12 @@ watch(() => props.conversations.length, () => {
   nextTick(() => { if (logEl.value) logEl.value.scrollTop = logEl.value.scrollHeight })
 })
 
-// 4层环：半径、点数、速度、方向
+// 粒子环 — 全部顺时针，不同半径和速度
 const rings = [
-  { r: 130, dots: 12, speed: 20, dir: 1 },
-  { r: 98, dots: 10, speed: 16, dir: -1 },
-  { r: 66, dots: 8, speed: 14, dir: 1 },
-  { r: 36, dots: 6, speed: 18, dir: -1 },
+  { r: 120, dots: 16, speed: 30, size: 2, alpha: 0.25 },
+  { r: 88, dots: 12, speed: 22, size: 2.5, alpha: 0.4 },
+  { r: 56, dots: 8, speed: 16, size: 3, alpha: 0.6 },
+  { r: 28, dots: 6, speed: 12, size: 3.5, alpha: 0.85 },
 ]
 </script>
 
@@ -51,54 +59,49 @@ const rings = [
 
     <div ref="logEl" style="flex:1;overflow-y:auto;min-height:0;">
 
-      <!-- 空状态 — 粒子汇聚 -->
+      <!-- 空状态 -->
       <div v-if="!hasSent && !loading" style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;text-align:center;min-height:100%;">
-        <div class="hero-stage" style="position:relative;width:320px;height:320px;display:flex;align-items:center;justify-content:center;margin-bottom:28px;">
-          <!-- 环容器 — 每层一个旋转的 div -->
-          <div v-for="(ring, ri) in rings" :key="'ring'+ri"
-            :class="'orbit-ring ring-'+ri"
+        <div class="hero-stage" :class="{ active: showAnim }" style="position:relative;width:300px;height:300px;flex-shrink:0;margin-bottom:28px;">
+
+          <!-- 环 -->
+          <div v-for="(ring, ri) in rings" :key="'r'+ri"
+            :class="'orbit ring-'+ri"
             :style="{
               position:'absolute',
+              top:'50%', left:'50%',
               width: ring.r*2+'px', height: ring.r*2+'px',
-              animation: `spin-${ring.speed} ${ring.speed}s linear infinite`,
-              animationDirection: ring.dir === 1 ? 'normal' : 'reverse',
+              marginLeft: -ring.r+'px', marginTop: -ring.r+'px',
             }"
           >
-            <!-- 环上的点 -->
             <div v-for="i in ring.dots" :key="'d'+ri+'-'+i"
-              :class="'dot dot-'+ri"
+              class="particle"
               :style="{
                 position:'absolute',
-                width: (ri===0?2.5:ri===1?3:ri===2?3.5:4)+'px',
-                height: (ri===0?2.5:ri===1?3:ri===2?3.5:4)+'px',
+                width: ring.size+'px', height: ring.size+'px',
                 borderRadius:'50%',
-                background:'var(--text)',
-                opacity: ri===0?0.25:ri===1?0.4:ri===2?0.55:0.75,
-                top: '50%',
-                left: '50%',
+                background: 'var(--text)',
+                opacity: ring.alpha,
+                top: '50%', left: '50%',
+                marginLeft: -(ring.size/2)+'px', marginTop: -(ring.size/2)+'px',
                 transform: `rotate(${(360/ring.dots)*i}deg) translateY(-${ring.r}px)`,
               }"
             />
           </div>
 
-          <!-- 中心 logo -->
-          <div class="logo-core">
-            <svg width="56" height="56" viewBox="0 0 48 48" fill="none" stroke="var(--text)" stroke-width="1.2">
-              <circle cx="24" cy="24" r="5" stroke-width="1.8"/>
-              <path d="M24 1v6m0 34v6M7.4 7.4l4.2 4.2m24.8 24.8l4.2 4.2M1 24h6m34 0h6M7.4 40.6l4.2-4.2m24.8-24.8l4.2-4.2"/>
-              <circle cx="24" cy="24" r="17" stroke-width="0.4" opacity="0.2"/>
-              <circle cx="24" cy="24" r="13" stroke-width="0.5" opacity="0.35"/>
+          <!-- logo -->
+          <div class="final-logo" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;">
+            <svg width="52" height="52" viewBox="0 0 48 48" fill="none" stroke="var(--text)" stroke-width="1.3">
+              <circle cx="24" cy="24" r="5" stroke-width="2"/>
+              <path d="M24 2v6m0 32v6M8.5 8.5l4.2 4.2m22.6 22.6l4.2 4.2M2 24h6m32 0h6M8.5 39.5l4.2-4.2m22.6-22.6l4.2-4.2"/>
             </svg>
           </div>
         </div>
 
-        <div class="brand-text">
-          <span style="font-weight:800;">A</span>utodl<span style="font-weight:800;">A</span>gents
-        </div>
+        <div class="brand-text">AutodlAgents</div>
         <div class="brand-sub">自然语言管理 GPU · Agent 自主决策</div>
       </div>
 
-      <!-- 对话列表 -->
+      <!-- 对话 -->
       <div v-if="hasSent" style="padding:0 4px;">
         <template v-for="conv in conversations" :key="conv.id">
           <div v-for="step in conv.steps" :key="step.id" :style="{ marginBottom: step.type === 'user' ? '16px' : '6px' }">
@@ -133,12 +136,10 @@ const rings = [
       </div>
 
       <div v-if="loading" style="display:flex;align-items:center;gap:8px;padding:12px 4px;">
-        <div style="flex-shrink:0;width:24px;height:24px;display:flex;align-items:center;justify-content:center;">
-          <svg width="20" height="20" viewBox="0 0 48 48" fill="none" stroke="var(--text)" stroke-width="1.2" class="pulse-icon">
-            <circle cx="24" cy="24" r="5" stroke-width="1.8"/>
-            <path d="M24 1v6m0 34v6M7.4 7.4l4.2 4.2m24.8 24.8l4.2 4.2M1 24h6m34 0h6M7.4 40.6l4.2-4.2m24.8-24.8l4.2-4.2"/>
-          </svg>
-        </div>
+        <svg width="20" height="20" viewBox="0 0 48 48" fill="none" stroke="var(--text)" stroke-width="1.2" class="pulse-icon">
+          <circle cx="24" cy="24" r="5" stroke-width="1.8"/>
+          <path d="M24 1v6m0 34v6M7.4 7.4l4.2 4.2m24.8 24.8l4.2 4.2M1 24h6m34 0h6M7.4 40.6l4.2-4.2m24.8-24.8l4.2-4.2"/>
+        </svg>
         <span style="font-size:13px;color:var(--text-dim);">思考中...</span>
       </div>
     </div>
@@ -159,65 +160,60 @@ const rings = [
   </div>
 </template>
 
-<style scoped>
-/* === 环旋转 === */
-@keyframes spin-14 { to { transform: rotate(360deg); } }
-@keyframes spin-16 { to { transform: rotate(360deg); } }
-@keyframes spin-18 { to { transform: rotate(360deg); } }
-@keyframes spin-20 { to { transform: rotate(360deg); } }
+<style>
+/* === scoped 外的全局动画样式（因为 orbit ring 由 v-for 动态生成） === */
 
-/* 汇聚 — 环缩小消失 */
-.ring-0 { animation: spin-20 20s linear infinite, ring-collapse 1s ease-in-out 2.8s forwards; }
-.ring-1 { animation: spin-16 16s linear infinite reverse, ring-collapse 1s ease-in-out 3.0s forwards; }
-.ring-2 { animation: spin-14 14s linear infinite, ring-collapse 0.9s ease-in-out 3.2s forwards; }
-.ring-3 { animation: spin-18 18s linear infinite reverse, ring-collapse 0.8s ease-in-out 3.4s forwards; }
+/* 默认隐藏，.active 触发后显示 */
+.hero-stage .orbit { opacity: 0; }
+.hero-stage .final-logo { opacity: 0; transform: scale(0.3); }
+.hero-stage + .brand-text,
+.hero-stage + .brand-text + .brand-sub { opacity: 0; transform: translateY(10px); }
 
-@keyframes ring-collapse {
-  0% { transform: scale(1); opacity: 1; }
-  100% { transform: scale(0); opacity: 0; }
+.hero-stage.active .orbit { opacity: 1; }
+.hero-stage.active .final-logo { opacity: 1; }
+
+/* GPU 加速 */
+.orbit { will-change: transform; backface-visibility: hidden; }
+
+/* 基础旋转 */
+.ring-0 { animation: orb30 30s linear infinite; }
+.ring-1 { animation: orb22 22s linear infinite; }
+.ring-2 { animation: orb16 16s linear infinite; }
+.ring-3 { animation: orb12 12s linear infinite; }
+
+@keyframes orb30 { to { transform: rotate(360deg); } }
+@keyframes orb22 { to { transform: rotate(360deg); } }
+@keyframes orb16 { to { transform: rotate(360deg); } }
+@keyframes orb12 { to { transform: rotate(360deg); } }
+
+/* 汇聚 */
+.active .ring-0 { animation: orb30 30s linear infinite, shrinkR 0.7s ease-in 3s forwards; }
+.active .ring-1 { animation: orb22 22s linear infinite, shrinkR 0.6s ease-in 3.15s forwards; }
+.active .ring-2 { animation: orb16 16s linear infinite, shrinkR 0.5s ease-in 3.3s forwards; }
+.active .ring-3 { animation: orb12 12s linear infinite, shrinkR 0.4s ease-in 3.45s forwards; }
+@keyframes shrinkR { to { transform: scale(0); opacity: 0; } }
+
+/* logo 弹入 */
+.active .final-logo {
+  animation: popIn 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) 3.5s forwards;
 }
-
-/* 点渐隐 */
-.dot { transition: opacity 0.5s; }
-.dot-0 { animation: dot-fade 0.8s ease-in-out 2.8s forwards; }
-.dot-1 { animation: dot-fade 0.7s ease-in-out 3.0s forwards; }
-.dot-2 { animation: dot-fade 0.6s ease-in-out 3.2s forwards; }
-.dot-3 { animation: dot-fade 0.5s ease-in-out 3.4s forwards; }
-
-@keyframes dot-fade {
-  0% { opacity: inherit; }
-  100% { opacity: 0; transform: scale(0); }
-}
-
-/* 中心 logo */
-.logo-core {
-  position: absolute; z-index: 10;
-  opacity: 0; transform: scale(0.2);
-  animation: logo-pop 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) 3.5s forwards;
-}
-@keyframes logo-pop {
-  0% { opacity: 0; transform: scale(0.2) rotate(-30deg); }
+@keyframes popIn {
+  0% { opacity: 0; transform: scale(0.2) rotate(-15deg); }
   100% { opacity: 1; transform: scale(1) rotate(0deg); }
 }
 
-/* 品牌文字 */
-.brand-text {
-  font-size: 1.4rem; font-weight: 600; color: var(--text);
-  opacity: 0; transform: translateY(10px);
-  animation: text-up 0.6s ease-out 4.0s forwards;
+/* 文字浮现 */
+.active + .brand-text {
+  animation: fadeIn 0.5s ease-out 3.8s forwards;
 }
-.brand-sub {
-  font-size: 12px; color: var(--text-dim); margin-top: 6px;
-  opacity: 0; transform: translateY(6px);
-  animation: text-up 0.6s ease-out 4.2s forwards;
+.active + .brand-text + .brand-sub {
+  animation: fadeIn 0.5s ease-out 4.0s forwards;
 }
-@keyframes text-up {
-  to { opacity: 1; transform: translateY(0); }
-}
+@keyframes fadeIn { to { opacity: 1; transform: translateY(0); } }
+
+.brand-text { font-size: 1.35rem; font-weight: 600; color: var(--text); }
+.brand-sub { font-size: 12px; color: var(--text-dim); margin-top: 6px; }
 
 .pulse-icon { animation: pulse 2s ease-in-out infinite; }
-@keyframes pulse {
-  0%, 100% { opacity: 0.3; }
-  50% { opacity: 1; }
-}
+@keyframes pulse { 0%,100%{opacity:.3} 50%{opacity:1} }
 </style>
