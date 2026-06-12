@@ -39,12 +39,12 @@ watch(() => props.conversations.length, () => {
   nextTick(() => { if (logEl.value) logEl.value.scrollTop = logEl.value.scrollHeight })
 })
 
-// 粒子环 — 全部顺时针，不同半径和速度
+// 光芒环 — 每层是竖线（太阳光芒），缓慢旋转
 const rings = [
-  { r: 120, dots: 16, speed: 30, size: 2, alpha: 0.25 },
-  { r: 88, dots: 12, speed: 22, size: 2.5, alpha: 0.4 },
-  { r: 56, dots: 8, speed: 16, size: 3, alpha: 0.6 },
-  { r: 28, dots: 6, speed: 12, size: 3.5, alpha: 0.85 },
+  { r: 120, rays: 24, speed: 40, w: 1.5, h: 14, alpha: 0.2 },
+  { r: 90, rays: 20, speed: 35, w: 1.5, h: 12, alpha: 0.3 },
+  { r: 60, rays: 16, speed: 30, w: 2, h: 10, alpha: 0.45 },
+  { r: 34, rays: 12, speed: 25, w: 2, h: 8, alpha: 0.65 },
 ]
 </script>
 
@@ -63,7 +63,7 @@ const rings = [
       <div v-if="!hasSent && !loading" style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;text-align:center;min-height:100%;">
         <div class="hero-stage" :class="{ active: showAnim }" style="position:relative;width:300px;height:300px;flex-shrink:0;margin-bottom:28px;">
 
-          <!-- 环 -->
+          <!-- 光芒环 -->
           <div v-for="(ring, ri) in rings" :key="'r'+ri"
             :class="'orbit ring-'+ri"
             :style="{
@@ -73,17 +73,19 @@ const rings = [
               marginLeft: -ring.r+'px', marginTop: -ring.r+'px',
             }"
           >
-            <div v-for="i in ring.dots" :key="'d'+ri+'-'+i"
-              class="particle"
+            <div v-for="i in ring.rays" :key="'d'+ri+'-'+i"
+              class="ray"
               :style="{
                 position:'absolute',
-                width: ring.size+'px', height: ring.size+'px',
-                borderRadius:'50%',
+                width: ring.w+'px', height: ring.h+'px',
+                borderRadius: ring.w+'px',
                 background: 'var(--text)',
                 opacity: ring.alpha,
                 top: '50%', left: '50%',
-                marginLeft: -(ring.size/2)+'px', marginTop: -(ring.size/2)+'px',
-                transform: `rotate(${(360/ring.dots)*i}deg) translateY(-${ring.r}px)`,
+                marginLeft: -(ring.w/2)+'px',
+                marginTop: -ring.r+'px',
+                transformOrigin: 'center ' + ring.r + 'px',
+                transform: `rotate(${(360/ring.rays)*i}deg)`,
               }"
             />
           </div>
@@ -175,43 +177,43 @@ const rings = [
 /* GPU 加速 */
 .orbit { will-change: transform; backface-visibility: hidden; }
 
-/* 基础旋转 */
-.ring-0 { animation: orb2 2s linear infinite; }
-.ring-1 { animation: orb1-5 1.5s linear infinite; }
-.ring-2 { animation: orb1 1s linear infinite; }
-.ring-3 { animation: orb0-7 0.7s linear infinite; }
+/* 慢速旋转 — 所有环缓慢顺时针 */
+.ring-0 { animation: spin40 40s linear infinite; }
+.ring-1 { animation: spin35 35s linear infinite; }
+.ring-2 { animation: spin30 30s linear infinite; }
+.ring-3 { animation: spin25 25s linear infinite; }
 
-@keyframes orb2 { to { transform: rotate(360deg); } }
-@keyframes orb1-5 { to { transform: rotate(360deg); } }
-@keyframes orb1 { to { transform: rotate(360deg); } }
-@keyframes orb0-7 { to { transform: rotate(360deg); } }
+@keyframes spin40 { to { transform: rotate(360deg); } }
+@keyframes spin35 { to { transform: rotate(360deg); } }
+@keyframes spin30 { to { transform: rotate(360deg); } }
+@keyframes spin25 { to { transform: rotate(360deg); } }
 
-/* 汇聚 — 0.4s后环的宽高收缩到0，点自然飞向中心 */
-.active .ring-0 { animation: orb2 2s linear infinite, converge0 0.5s ease-in 0.4s forwards; }
-.active .ring-1 { animation: orb1-5 1.5s linear infinite, converge1 0.45s ease-in 0.45s forwards; }
-.active .ring-2 { animation: orb1 1s linear infinite, converge2 0.4s ease-in 0.5s forwards; }
-.active .ring-3 { animation: orb0-7 0.7s linear infinite, converge3 0.35s ease-in 0.55s forwards; }
+/* 汇聚 — 0.1s后收缩到0 */
+.active .ring-0 { animation: spin40 40s linear infinite, c0 0.4s ease-in 0.1s forwards; }
+.active .ring-1 { animation: spin35 35s linear infinite, c1 0.35s ease-in 0.12s forwards; }
+.active .ring-2 { animation: spin30 30s linear infinite, c2 0.3s ease-in 0.14s forwards; }
+.active .ring-3 { animation: spin25 25s linear infinite, c3 0.25s ease-in 0.16s forwards; }
 
-@keyframes converge0 { to { width:0; height:0; margin-left:0; margin-top:0; opacity:0; } }
-@keyframes converge1 { to { width:0; height:0; margin-left:0; margin-top:0; opacity:0; } }
-@keyframes converge2 { to { width:0; height:0; margin-left:0; margin-top:0; opacity:0; } }
-@keyframes converge3 { to { width:0; height:0; margin-left:0; margin-top:0; opacity:0; } }
+@keyframes c0 { to { width:0; height:0; margin-left:0; margin-top:0; opacity:0; } }
+@keyframes c1 { to { width:0; height:0; margin-left:0; margin-top:0; opacity:0; } }
+@keyframes c2 { to { width:0; height:0; margin-left:0; margin-top:0; opacity:0; } }
+@keyframes c3 { to { width:0; height:0; margin-left:0; margin-top:0; opacity:0; } }
 
-/* logo — 0.7s 弹入 */
+/* logo — 0.4s 弹入 */
 .active .final-logo {
-  animation: popIn 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) 0.75s forwards;
+  animation: popIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) 0.35s forwards;
 }
 @keyframes popIn {
-  0% { opacity: 0; transform: scale(0.1) rotate(-10deg); }
+  0% { opacity: 0; transform: scale(0.1) rotate(-8deg); }
   100% { opacity: 1; transform: scale(1) rotate(0deg); }
 }
 
-/* 文字 — 1.0s 浮现 */
+/* 文字 — 0.6s */
 .active + .brand-text {
-  animation: fadeIn 0.35s ease-out 1.0s forwards;
+  animation: fadeIn 0.3s ease-out 0.55s forwards;
 }
 .active + .brand-text + .brand-sub {
-  animation: fadeIn 0.35s ease-out 1.15s forwards;
+  animation: fadeIn 0.3s ease-out 0.65s forwards;
 }
 @keyframes fadeIn { to { opacity: 1; transform: translateY(0); } }
 

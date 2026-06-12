@@ -186,8 +186,16 @@ async function refreshCost(force = false) {
   loading.cost = true
   try {
     const data = await loadCost(force)
-    if (data && !(data as any).error) costData.value = data as CostData
-  } catch (_) { /* network error, keep cached data */ }
+    if (data) {
+      if ((data as any).error) {
+        console.warn('Cost API error:', (data as any).message)
+      } else {
+        costData.value = data as CostData
+      }
+    }
+  } catch (e) {
+    console.warn('Cost fetch failed:', e)
+  }
   loading.cost = false
 }
 
