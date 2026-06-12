@@ -222,13 +222,13 @@ class InstanceRegistry:
             # 一次性获取所有信息
             cmd = (
                 "HAS_GPU=0; "
-                "GPU_DATA=$(nvidia-smi --query-gpu=name,memory.total,memory.free,utilization.gpu,temperature.gpu --format=csv,noheader 2>/dev/null); "
+                "GPU_DATA=$(nvidia-smi --query-gpu=name,memory.total,memory.free,utilization.gpu,temperature.gpu --format=csv,noheader,nounits 2>/dev/null); "
                 "if [ -n \"$GPU_DATA\" ]; then HAS_GPU=1; fi; "
                 "echo \"GPU_PRESENT=$HAS_GPU\"; "
                 "echo \"$GPU_DATA\"; "
                 "echo '---GPU_PROC---'; "
                 "if [ $HAS_GPU -eq 1 ]; then "
-                "  nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader 2>/dev/null; "
+                "  nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader,nounits 2>/dev/null; "
                 "fi; "
                 "echo '---SYS---'; "
                 "hostname; "
