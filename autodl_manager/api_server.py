@@ -807,23 +807,31 @@ def create_app() -> FastAPI:
         if ":" not in panel_host:
             panel_host = f"{panel_host}:8899"
 
-        from .agent.deploy import ClaudeCodeDeployer
-        deployer = ClaudeCodeDeployer(
-            host=host,
-            port=inst.get("ssh_port", 22),
-            username=inst.get("ssh_user", "root"),
-            password=inst.get("ssh_password", ""),
-            key_filename=inst.get("ssh_key_path", ""),
-        )
+        try:
+            from .agent.deploy import ClaudeCodeDeployer
+            deployer = ClaudeCodeDeployer(
+                host=host,
+                port=inst.get("ssh_port", 22),
+                username=inst.get("ssh_user", "root"),
+                password=inst.get("ssh_password", ""),
+                key_filename=inst.get("ssh_key_path", ""),
+            )
 
-        result = deployer.deploy(panel_host=panel_host, api_key=api_key)
+            result = deployer.deploy(panel_host=panel_host, api_key=api_key)
 
-        if result["success"]:
-            _sse_broadcast("agent_deployed", {
-                "uuid": uuid,
-                "tmux_session": result.get("tmux_session"),
-            })
-        return result
+            if result["success"]:
+                _sse_broadcast("agent_deployed", {
+                    "uuid": uuid,
+                    "tmux_session": result.get("tmux_session"),
+                })
+            return result
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e) or type(e).__name__,
+                "log": [],
+                "detail": "部署异常，请确认服务器 SSH 可达且网络正常",
+            }
 
     @app.post("/api/agent/orchestrate")
     async def agent_orchestrate(request: Request):

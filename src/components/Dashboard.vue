@@ -30,12 +30,18 @@ async function doDeploy() {
     })
     const data = await res.json()
     if (data.success) {
-      alert(`Claude Code 已部署到服务器!\n\n连接: tmux attach -t claude-code\n\n${data.log?.join('\n') || ''}`)
+      alert('Claude Code 已部署!\n\n' + data.log?.slice(-5).join('\n'))
     } else {
-      alert('部署失败: ' + (data.error || '未知错误'))
+      const err = data.error || data.detail || '未知错误'
+      const log = (data.log || []).slice(-3).join('\n')
+      alert('部署失败: ' + err + (log ? '\n\n' + log : ''))
     }
   } catch (e: unknown) {
-    alert('部署请求失败: ' + (e instanceof Error ? e.message : '网络错误'))
+    if (e instanceof TypeError && e.message === 'Failed to fetch') {
+      alert('无法连接后端服务。请确认 python sidecar.py 已启动')
+    } else {
+      alert('部署请求失败: ' + (e instanceof Error ? e.message : String(e)))
+    }
   }
   deploying.value = false
 }
