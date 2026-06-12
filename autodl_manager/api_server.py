@@ -822,6 +822,71 @@ def create_app() -> FastAPI:
                 "detail": "部署异常，请确认服务器 SSH 可达且网络正常",
             }
 
+    # ─── 任务管理（Plan A：任务文件调度）───
+
+    @app.post("/api/agent/tasks")
+    async def create_task(request: Request):
+        """创建 Agent 任务。POST body: {description, task_type, [params], [target_server]}。"""
+        body = await request.json()
+        task_id = f"task-{int(time.time()*1000)}"
+        task = {
+            "task_id": task_id,
+            "description": body.get("description", ""),
+            "task_type": body.get("task_type", "general"),
+            "params": body.get("params", {}),
+            "target_server": body.get("target_server", ""),
+            "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "status": "pending",
+        }
+
+        # 写入 ChromaDB 记忆
+        from .agent.memory import AgentMemory
+        mem = AgentMemory()
+        mem.add_decision(
+            context=f"创建任务: {task['description'][:100]}",
+            chosen_action=json.dumps(task, ensure_ascii=False),
+        )
+
+        _sse_broadcast("task_created", task)
+        return {"ok": True, "task": task}
+
+    @app.get("/api/agent/tasks")
+    async def list_tasks():
+        """列出所有任务。"""
+        from .agent.memory import AgentMemory
+        mem = AgentMemory()
+        results = mem.decisions.get()
+        tasks = []
+        if results and results["documents"]:
+            for i, doc in enumerate(results["documents"]):
+                try:
+                    d = json.loads(doc) if isinstance(doc, str) else doc
+                    if "任务:" in str(d) or "task" in str(d).lower():
+                        tasks.append({"id": results["ids"][i], "content": doc[:300], "meta": results["metadatas"][i] if results["metadatas"] else {}})
+                except Exception:
+                    pass
+        return {"tasks": tasks[-20:]}
+
+    @app.post("/api/agent/report")
+    async def agent_report(request: Request):
+        """服务器 Agent 上报任务状态（watchdog 调用的）。"""
+        body = await request.json()
+        task_id = body.get("task_id", "")
+        status = body.get("status", "")
+        result = body.get("result", {})
+
+        from .agent.memory import AgentMemory
+        mem = AgentMemory()
+        mem.add_experiment(
+            exp_id=task_id,
+            config={"server": body.get("server_id", ""), "status": status},
+            results=result if isinstance(result, dict) else {},
+            notes=f"Agent 上报: {status}",
+        )
+
+        _sse_broadcast("task_update", body)
+        return {"ok": True}
+
     @app.post("/api/agent/orchestrate")
     async def agent_orchestrate(request: Request):
         """多 Agent 编排：任务规划 → 分发 → 执行 → 汇总。

@@ -113,9 +113,10 @@ class ClaudeCodeDeployer:
             self._log("[4/5] Claude Code")
             self._install_claude_code()
 
-            # Step 5: 配置环境变量 + 启动
-            self._log("[5/5] 配置 + 启动")
+            # Step 5: 配置环境 + 部署 watchdog + 启动
+            self._log("[5/5] 配置 + watchdog + 启动")
             self._configure_env(api_key)
+            self._deploy_watchdog(workspace)
             self._start_tmux(workspace)
 
             if self.client:
@@ -235,22 +236,51 @@ class ClaudeCodeDeployer:
         self._log(f"  API URL: https://api.deepseek.com/anthropic")
         self._log(f"  Model: deepseek-v4-pro")
 
+    # ─── watchdog ───
+
+    def _deploy_watchdog(self, workspace: str):
+        """部署任务监听器的 Python 脚本到服务器。
+
+        watchdog.py 每 10s 扫描 tasks/*.yaml，自动调 CC 执行，
+        结果写入 results/*.json，上报面板 ChromaDB。
+        """
+        # 找 watchdog.py 的位置
+        import autodl_manager.agent.watchdog as wd
+        wd_path = Path(wd.__file__)
+
+        # SFTP 上传
+        remote_path = f"{workspace}/watchdog.py"
+        self._log(f"  上传 watchdog.py ...")
+        with open(wd_path, "r") as src:
+            self._write_file(remote_path, src.read())
+
+        # 装依赖
+        self._exec("pip3 install pyyaml 2>/dev/null || pip install pyyaml 2>/dev/null || true", timeout=60)
+
+        self._log(f"  watchdog 已部署到 {remote_path}")
+
     # ─── tmux ───
 
     def _start_tmux(self, workspace: str):
-        """在 tmux 中启动 Claude Code。"""
+        """在 tmux 中分别启动 Claude Code 和 watchdog。"""
         # 装 tmux（如果没有）
         _, _, code = self._exec("which tmux 2>/dev/null")
         if code != 0:
             self._log("  安装 tmux...")
             self._exec("apt-get update -qq && apt-get install -y tmux 2>&1 || yum install -y tmux 2>&1", timeout=90)
 
-        self._exec(f"mkdir -p {workspace}")
+        self._exec(f"mkdir -p {workspace}/tasks {workspace}/results")
+
+        # 1. 启动 Claude Code
         self._exec("tmux kill-session -t claude-code 2>/dev/null; true")
+        cc_cmd = f"cd {workspace} && source ~/.claude/env.sh && claude"
+        self._exec(f"tmux new-session -d -s claude-code {repr(cc_cmd)}")
 
-        # 启动：source env → cd workspace → claude
-        start_cmd = f"cd {workspace} && source ~/.claude/env.sh && claude"
-        self._exec(f"tmux new-session -d -s claude-code {repr(start_cmd)}")
+        # 2. 启动 watchdog
+        self._exec("tmux kill-session -t watchdog 2>/dev/null; true")
+        wd_cmd = f"cd {workspace} && python3 watchdog.py"
+        self._exec(f"tmux new-session -d -s watchdog {repr(wd_cmd)}")
 
-        self._log(f"  tmux: claude-code")
-        self._log(f"  连接: tmux attach -t claude-code")
+        self._log(f"  tmux: claude-code + watchdog")
+        self._log(f"  CC:  tmux attach -t claude-code")
+        self._log(f"  WD:  tmux attach -t watchdog")
