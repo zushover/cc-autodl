@@ -18,6 +18,15 @@ import SettingsPanel from './components/SettingsPanel.vue'
 import RegisterDialog from './components/RegisterDialog.vue'
 import AgentLog from './components/AgentLog.vue'
 
+// ── Agent 类型 ──
+
+interface AgentStep {
+  id: number; timestamp: string; type: string; content: string; toolName?: string
+}
+interface AgentConversation {
+  id: number; query: string; steps: AgentStep[]
+}
+
 // ── State ──
 
 const tabs: Tab[] = [
@@ -39,6 +48,77 @@ const alerts = ref<Alert[]>([])
 const logLines = ref<string[]>([])
 const serverOnline = ref(false)
 const toastId = ref(0)
+
+// ── Agent 状态（在 App.vue 中，永不丢失）──
+
+const agentConversations = ref<AgentConversation[]>([])
+const agentQuery = ref('')
+const agentLoading = ref(false)
+const agentMemoryStats = ref({ conversations: 0, experiments: 0, decisions: 0 })
+
+function agentNow() { return new Date().toLocaleTimeString() }
+
+async function sendAgentQuery(text?: string) {
+  const q = text || agentQuery.value.trim()
+  if (!q || agentLoading.value) return
+  agentLoading.value = true
+  agentQuery.value = ''
+
+  const conv: AgentConversation = { id: Date.now(), query: q, steps: [] }
+  conv.steps.push({ id: Date.now(), timestamp: agentNow(), type: 'user', content: q })
+  agentConversations.value.push(conv)
+
+  // thinking
+  const tid = Date.now()
+  conv.steps.push({ id: tid, timestamp: agentNow(), type: 'thinking', content: '正在分析请求...' })
+
+  try {
+    const res = await fetch('http://127.0.0.1:8899/api/agent/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      body: JSON.stringify({ query: q }),
+    })
+    const data = await res.json()
+
+    // 移除 thinking
+    conv.steps = conv.steps.filter(s => s.id !== tid)
+
+    if (data.steps && Array.isArray(data.steps)) {
+      for (const s of data.steps) {
+        if (s.type === 'user_input') continue
+        if (s.type === 'tool_call') {
+          const args = s.tool_args ? JSON.stringify(s.tool_args) : ''
+          const shortArgs = args.length > 200 ? args.slice(0, 200) + '...' : args
+          conv.steps.push({ id: Date.now(), timestamp: agentNow(), type: 'tool_call', content: shortArgs ? '参数: ' + shortArgs : '', toolName: s.tool_name })
+        } else if (s.type === 'tool_result') {
+          const c = (s.content || '').length > 500 ? (s.content || '').slice(0, 500) + '...' : (s.content || '')
+          conv.steps.push({ id: Date.now(), timestamp: agentNow(), type: 'tool_result', content: c, toolName: s.tool_name })
+        } else if (s.type === 'thinking' && s.content) {
+          conv.steps.push({ id: Date.now(), timestamp: agentNow(), type: 'thinking', content: s.content })
+        }
+      }
+    }
+
+    if (data.answer) {
+      conv.steps.push({ id: Date.now(), timestamp: agentNow(), type: 'answer', content: data.answer })
+    } else if (data.error) {
+      conv.steps.push({ id: Date.now(), timestamp: agentNow(), type: 'answer', content: '错误: ' + data.error })
+    }
+  } catch (e: unknown) {
+    conv.steps.push({ id: Date.now(), timestamp: agentNow(), type: 'answer', content: '连接失败: 请确认服务已启动 (python sidecar.py)' })
+  }
+
+  agentLoading.value = false
+  refreshAgentMemory()
+}
+
+async function refreshAgentMemory() {
+  try {
+    const res = await fetch('http://127.0.0.1:8899/api/agent/status')
+    const data = await res.json()
+    if (data.memory) agentMemoryStats.value = data.memory
+  } catch (_) { /* ignore */ }
+}
 
 const loading = reactive({
   init: true, instances: false, sync: false, register: false,
@@ -247,6 +327,12 @@ onUnmounted(() => {
 
           <AgentLog
             v-if="currentTab === 'agent'"
+            :conversations="agentConversations"
+            :query="agentQuery"
+            :loading="agentLoading"
+            :memoryStats="agentMemoryStats"
+            @send="sendAgentQuery($event)"
+            @update:query="agentQuery = $event"
           />
 
           <CostAnalysis
