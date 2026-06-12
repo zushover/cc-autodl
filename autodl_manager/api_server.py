@@ -434,6 +434,7 @@ def create_app() -> FastAPI:
 
     # ─── REST API: 费用 ───
 
+    _cost_cache: dict = {"ts": 0, "data": None}
     _ai_calls: int = 0
 
     def _track_ai_call():
@@ -469,6 +470,13 @@ def create_app() -> FastAPI:
 
     @app.get("/api/cost")
     def cost_summary(refresh: str = "0"):
+        nonlocal _cost_cache
+        now = time.time()
+
+        # 缓存30秒，refresh=1 强制刷新
+        if refresh != "1" and _cost_cache["data"] is not None and (now - _cost_cache["ts"]) < 30:
+            return _cost_cache["data"]
+
         # AutoDL
         server_balance = 0.0
         server_spent = 0.0
@@ -480,14 +488,16 @@ def create_app() -> FastAPI:
             except Exception:
                 pass
 
-        # DeepSeek
-        ai = _query_deepseek_balance() if refresh == "1" else {"balance": None}
+        # DeepSeek — 每次都查（有缓存兜底）
+        ai = _query_deepseek_balance()
         ai_balance = ai.get("balance")
+        if ai_balance is None and _cost_cache["data"] is not None:
+            # 失败时用缓存
+            ai_balance = _cost_cache["data"].get("ai_balance")
 
-        # Total
         total = server_balance + (ai_balance or 0)
 
-        return {
+        result = {
             "server_balance": server_balance,
             "server_spent": server_spent,
             "ai_balance": ai_balance,
@@ -496,6 +506,8 @@ def create_app() -> FastAPI:
             "ai_calls": _ai_calls,
             "total_balance": round(total, 2),
         }
+        _cost_cache = {"ts": now, "data": result}
+        return result
 
     # ─── REST API: 告警 ───
 

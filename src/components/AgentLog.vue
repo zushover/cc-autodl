@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, nextTick, watch } from 'vue'
+import { ref, nextTick, watch, computed } from 'vue'
 
 interface AgentStep {
   id: number; timestamp: string; type: string; content: string; toolName?: string
@@ -21,26 +21,12 @@ const emit = defineEmits<{
 }>()
 
 const logEl = ref<HTMLElement | null>()
-
-const quickActions = [
-  { label: 'GPU概况', query: '列出所有GPU实例' },
-  { label: '查余额', query: '查询我的账户余额' },
-  { label: '查利用率', query: '检查westb那台3080Ti的GPU利用率' },
-]
-
-const typeCfg: Record<string, { icon: string; color: string; label: string; bg: string }> = {
-  user:       { icon: '👤', color: 'var(--text-secondary)', label: '你',    bg: 'var(--border)' },
-  thinking:   { icon: '🧠', color: '#a78bfa', label: '思考',  bg: 'rgba(167,139,250,0.06)' },
-  tool_call:  { icon: '🔧', color: '#60a5fa', label: '调用',  bg: 'rgba(96,165,250,0.06)' },
-  tool_result:{ icon: '📊', color: '#4ade80', label: '结果',  bg: 'rgba(74,222,128,0.06)' },
-  answer:     { icon: '🤖', color: '#fbbf24', label: 'Agent', bg: 'rgba(251,191,36,0.04)' },
-}
+const hasSent = computed(() => props.conversations.length > 0)
 
 function doSend(text?: string) {
   emit('send', text || props.query)
 }
 
-// 新对话时自动滚到底部
 watch(() => props.conversations.length, () => {
   nextTick(() => { if (logEl.value) logEl.value.scrollTop = logEl.value.scrollHeight })
 })
@@ -51,50 +37,87 @@ watch(() => props.conversations.length, () => {
     <!-- 顶栏 -->
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-shrink:0;">
       <h1 style="font-size:1.3rem;font-weight:700;margin:0;">AI Agent</h1>
-      <div style="display:flex;gap:14px;font-size:11px;color:var(--text-secondary);">
-        <span>💬 {{ conversations.length }}</span>
-        <span>🧠 {{ memoryStats.conversations }}</span>
-        <span>📋 {{ memoryStats.decisions }}</span>
+      <div style="display:flex;gap:14px;font-size:11px;color:var(--text-dim);">
+        <span>{{ conversations.length }} 轮对话</span>
       </div>
-    </div>
-
-    <!-- 快捷指令 -->
-    <div style="display:flex;gap:6px;margin-bottom:10px;flex-shrink:0;flex-wrap:wrap;">
-      <button v-for="a in quickActions" :key="a.label" @click="doSend(a.query)" :disabled="loading"
-        style="padding:5px 12px;background:var(--bg-input);border:1px solid var(--border);border-radius:16px;color:var(--text-secondary);font-size:12px;cursor:pointer;"
-      >{{ a.label }}</button>
     </div>
 
     <!-- 对话区 -->
-    <div ref="logEl" style="flex:1;overflow-y:auto;background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:16px;min-height:0;">
-      <div v-if="conversations.length === 0 && !loading" style="color:var(--border);text-align:center;padding:60px 20px;">
-        <div style="font-size:40px;margin-bottom:12px;">🤖</div>
-        <div style="font-size:14px;margin-bottom:4px;">自然语言管理 GPU</div>
-        <div style="font-size:12px;">试试上方快捷指令，或输入 "检查GPU利用率"</div>
+    <div ref="logEl" style="flex:1;overflow-y:auto;min-height:0;">
+
+      <!-- 空状态 — 产品 logo 动画 -->
+      <div v-if="!hasSent && !loading" style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 20px;text-align:center;">
+        <!-- 产品 logo — 太阳射线 -->
+        <div class="logo-spin">
+          <svg width="64" height="64" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.2" style="color:var(--text);">
+            <circle cx="24" cy="24" r="6" stroke-width="1.5"/>
+            <path d="M24 2v6m0 32v6M8.46 8.46l4.24 4.24m22.6 22.6l4.24 4.24M2 24h6m32 0h6M8.46 39.54l4.24-4.24m22.6-22.6l4.24-4.24"/>
+            <circle cx="24" cy="24" r="18" stroke-width="0.4" opacity="0.3"/>
+            <circle cx="24" cy="24" r="14" stroke-width="0.6" opacity="0.5"/>
+          </svg>
+        </div>
+        <div style="font-size:1.2rem;font-weight:700;margin-top:20px;margin-bottom:6px;color:var(--text);">autodlagents</div>
+        <div style="font-size:13px;color:var(--text-dim);max-width:260px;line-height:1.6;">
+          自然语言管理 GPU 实例<br>Agent 自主决策 · 工具调用 · 实时监控
+        </div>
       </div>
 
-      <template v-for="conv in conversations" :key="conv.id">
-        <div v-for="step in conv.steps" :key="step.id"
-          style="margin-bottom:8px;padding:8px 12px;border-radius:8px;"
-          :style="{ background: (typeCfg[step.type] || typeCfg.answer!).bg }">
-          <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;">
-            <span style="font-size:13px;">{{ (typeCfg[step.type] || typeCfg.answer!).icon }}</span>
-            <span style="font-size:11px;font-weight:600;" :style="{ color: (typeCfg[step.type] || typeCfg.answer!).color }">
-              {{ (typeCfg[step.type] || typeCfg.answer!).label }}
-            </span>
-            <span v-if="step.toolName" style="font-size:10px;color:#60a5fa;background:rgba(96,165,250,0.1);padding:0px 5px;border-radius:3px;">
-              {{ step.toolName }}
-            </span>
-            <span style="font-size:10px;color:var(--border);margin-left:auto;">{{ step.timestamp }}</span>
-          </div>
-          <div v-if="step.content" style="font-size:13px;color:var(--text);white-space:pre-wrap;line-height:1.55;">{{ step.content }}</div>
-        </div>
-        <div style="border-top:1px solid var(--border);margin:12px 0;"></div>
-      </template>
+      <!-- 对话列表 -->
+      <div v-if="hasSent" style="padding:0 4px;">
+        <template v-for="conv in conversations" :key="conv.id">
+          <!-- 用户消息 -->
+          <div v-for="step in conv.steps" :key="step.id" :style="{ marginBottom: step.type === 'user' ? '16px' : '6px' }">
+            <!-- 用户 — 右对齐 -->
+            <div v-if="step.type === 'user'" style="display:flex;justify-content:flex-end;">
+              <div style="max-width:75%;background:var(--bg-hover);border:1px solid var(--border);border-radius:12px 12px 4px 12px;padding:10px 14px;">
+                <div style="font-size:13px;color:var(--text);line-height:1.5;">{{ step.content }}</div>
+              </div>
+            </div>
 
-      <div v-if="loading" style="display:flex;align-items:center;gap:8px;padding:8px 12px;color:var(--text-secondary);font-size:12px;">
-        <span style="display:inline-block;width:8px;height:8px;background:#a78bfa;border-radius:50%;animation:pulse 1s infinite;"></span>
-        正在调用 LLM + 工具...
+            <!-- 工具调用 — 小标签 -->
+            <div v-else-if="step.type === 'tool_call'" style="display:flex;align-items:center;gap:6px;padding:3px 0 3px 4px;">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--text-dim);"><circle cx="12" cy="12" r="3"/><path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+              <span style="font-size:11px;color:var(--text-dim);">{{ step.toolName || 'tool' }}</span>
+              <span v-if="step.content" style="font-size:10px;color:var(--text-dim);opacity:0.6;">{{ step.content.slice(0, 80) }}</span>
+            </div>
+
+            <!-- 工具结果 — 灰色小字 -->
+            <div v-else-if="step.type === 'tool_result'" style="padding:2px 0 2px 4px;">
+              <span style="font-size:11px;color:var(--text-dim);opacity:0.5;">{{ (step.content || '').slice(0, 120) }}</span>
+            </div>
+
+            <!-- Agent 回答 — 左对齐 -->
+            <div v-else-if="step.type === 'answer'" style="display:flex;gap:8px;">
+              <!-- logo 小头像 -->
+              <div style="flex-shrink:0;width:24px;height:24px;display:flex;align-items:center;justify-content:center;">
+                <svg width="20" height="20" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.2" style="color:var(--text);">
+                  <circle cx="24" cy="24" r="5" stroke-width="1.8"/>
+                  <path d="M24 1v6m0 34v6M7.4 7.4l4.2 4.2m24.8 24.8l4.2 4.2M1 24h6m34 0h6M7.4 40.6l4.2-4.2m24.8-24.8l4.2-4.2"/>
+                </svg>
+              </div>
+              <div style="flex:1;font-size:13px;color:var(--text);line-height:1.6;white-space:pre-wrap;">{{ step.content }}</div>
+            </div>
+
+            <!-- 思考 — 小字 -->
+            <div v-else-if="step.type === 'thinking'" style="padding:2px 0 2px 4px;">
+              <span style="font-size:11px;color:var(--text-dim);font-style:italic;">{{ step.content }}</span>
+            </div>
+          </div>
+
+          <!-- 分隔 -->
+          <div style="border-top:1px solid var(--border-light);margin:16px 0;"></div>
+        </template>
+      </div>
+
+      <!-- loading -->
+      <div v-if="loading" style="display:flex;align-items:center;gap:8px;padding:12px 4px;">
+        <div style="flex-shrink:0;width:24px;height:24px;display:flex;align-items:center;justify-content:center;">
+          <svg width="20" height="20" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.2" class="logo-pulse" style="color:var(--text);">
+            <circle cx="24" cy="24" r="5" stroke-width="1.8"/>
+            <path d="M24 1v6m0 34v6M7.4 7.4l4.2 4.2m24.8 24.8l4.2 4.2M1 24h6m34 0h6M7.4 40.6l4.2-4.2m24.8-24.8l4.2-4.2"/>
+          </svg>
+        </div>
+        <span style="font-size:13px;color:var(--text-dim);">思考中...</span>
       </div>
     </div>
 
@@ -106,18 +129,28 @@ watch(() => props.conversations.length, () => {
         @keyup.enter="doSend()"
         :disabled="loading"
         placeholder="输入自然语言，例如: 检查GPU利用率..."
-        style="flex:1;padding:10px 14px;background:var(--bg-input);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:14px;outline:none;"
+        style="flex:1;padding:10px 14px;background:var(--bg-input);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;outline:none;"
       />
       <button @click="doSend()" :disabled="loading || !query.trim()"
-        style="padding:10px 24px;background:linear-gradient(135deg,#2563eb,#7c3aed);border:none;border-radius:10px;color:#fff;font-size:14px;cursor:pointer;font-weight:600;white-space:nowrap;"
-      >{{ loading ? '⏳' : '发送' }}</button>
+        style="padding:10px 20px;background:var(--accent-bg);border:none;border-radius:8px;color:#fff;font-size:14px;cursor:pointer;font-weight:600;"
+      >发送</button>
     </div>
   </div>
 </template>
 
 <style scoped>
+.logo-spin {
+  animation: logoEnter 0.8s ease-out;
+}
+@keyframes logoEnter {
+  from { opacity: 0; transform: scale(0.8) rotate(-10deg); }
+  to { opacity: 1; transform: scale(1) rotate(0deg); }
+}
+.logo-pulse {
+  animation: pulse 2s ease-in-out infinite;
+}
 @keyframes pulse {
-  0%, 100% { opacity: 0.3; }
+  0%, 100% { opacity: 0.4; }
   50% { opacity: 1; }
 }
 </style>
