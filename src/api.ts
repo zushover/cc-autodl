@@ -10,16 +10,16 @@ export function isServerReady(): boolean {
   return serverReady
 }
 
-export async function waitForServer(maxRetries = 30): Promise<boolean> {
+export async function waitForServer(maxRetries = 20): Promise<boolean> {
   for (let i = 0; i < maxRetries; i++) {
     try {
-      const res = await fetch(API_BASE + '/api/stats')
+      const res = await fetch(API_BASE + '/api/stats', { signal: AbortSignal.timeout(2000) })
       if (res.ok) {
         serverReady = true
         return true
       }
     } catch (_) { /* server not up yet */ }
-    await new Promise(r => setTimeout(r, 500))
+    await new Promise(r => setTimeout(r, 300))
   }
   return false
 }

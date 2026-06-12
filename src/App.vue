@@ -220,51 +220,53 @@ onUnmounted(() => {
       <Loading v-if="loading.init" :serverOnline="serverOnline" />
 
       <template v-else>
-        <Dashboard
-          v-if="currentTab === 'dashboard'"
-          :currentInstance="currentInstance"
-          :instances="instances"
-          :gpuData="gpuData"
-          :probeResult="probeResult"
-          :loading="loading"
-          @probe="doProbeCurrent"
-          @refreshGPU="doRefreshGPU"
-          @shutdown="doShutdownCurrent"
-          @setCurrent="doSetCurrent"
-        />
+        <KeepAlive>
+          <Dashboard
+            v-if="currentTab === 'dashboard'"
+            :currentInstance="currentInstance"
+            :instances="instances"
+            :gpuData="gpuData"
+            :probeResult="probeResult"
+            :loading="loading"
+            @probe="doProbeCurrent"
+            @refreshGPU="doRefreshGPU"
+            @shutdown="doShutdownCurrent"
+            @setCurrent="doSetCurrent"
+          />
 
-        <InstanceList
-          v-if="currentTab === 'instances'"
-          :instances="instances"
-          :loading="loading"
-          @syncPro="doSyncPro"
-          @openRegister="registerDialog?.open()"
-          @setCurrent="doSetCurrent"
-          @probe="doProbe"
-          @remove="doRemove"
-        />
+          <InstanceList
+            v-if="currentTab === 'instances'"
+            :instances="instances"
+            :loading="loading"
+            @syncPro="doSyncPro"
+            @openRegister="registerDialog?.open()"
+            @setCurrent="doSetCurrent"
+            @probe="doProbe"
+            @remove="doRemove"
+          />
 
-        <AgentLog
-          v-if="currentTab === 'agent'"
-        />
+          <AgentLog
+            v-if="currentTab === 'agent'"
+          />
 
-        <CostAnalysis
-          v-if="currentTab === 'cost'"
-          :costData="costData"
-          :loading="loading.cost"
-          @refresh="refreshCost(true)"
-        />
+          <CostAnalysis
+            v-if="currentTab === 'cost'"
+            :costData="costData"
+            :loading="loading.cost"
+            @refresh="refreshCost(true)"
+          />
 
-        <LogTerminal
-          v-if="currentTab === 'logs'"
-          :currentInstance="currentInstance"
-          :logLines="logLines"
-        />
+          <LogTerminal
+            v-if="currentTab === 'logs'"
+            :currentInstance="currentInstance"
+            :logLines="logLines"
+          />
 
-        <SettingsPanel
-          v-if="currentTab === 'settings'"
-          @costUpdated="costData = {} as CostData; refreshCost(true)"
-        />
+          <SettingsPanel
+            v-if="currentTab === 'settings'"
+            @costUpdated="costData = {} as CostData; refreshCost(true)"
+          />
+        </KeepAlive>
       </template>
     </div>
   </div>
