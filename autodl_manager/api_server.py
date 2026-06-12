@@ -432,50 +432,70 @@ def create_app() -> FastAPI:
         except AutoDLAPIError as e:
             return JSONResponse({"error": str(e)}, 500)
 
-    # ─── REST API: 费用（带缓存）───
+    # ─── REST API: 费用 ───
 
-    _cost_cache: dict = {"ts": 0, "data": None}
-    _ai_usage: dict = {"total_tokens": 0, "total_calls": 0, "estimated_cost_yuan": 0.0}
+    _ai_calls: int = 0
 
-    def _track_ai_usage(tokens: int = 0):
-        """追踪 AI API 用量。DeepSeek v4-pro: ~¥1/百万token。"""
-        _ai_usage["total_tokens"] += tokens
-        _ai_usage["total_calls"] += 1
-        # 估算：DeepSeek 定价约 ¥1/百万token
-        _ai_usage["estimated_cost_yuan"] = round(_ai_usage["total_tokens"] / 1_000_000 * 1.0, 4)
+    def _track_ai_call():
+        nonlocal _ai_calls
+        _ai_calls += 1
+
+    def _query_deepseek_balance() -> dict:
+        """查询 DeepSeek API 余额。"""
+        import requests as req
+        config = _load_config()
+        api_key = config.get("llm", {}).get("api_key", "")
+        if not api_key:
+            return {"balance": None, "error": "API Key 未配置"}
+        try:
+            r = req.get(
+                "https://api.deepseek.com/user/balance",
+                headers={"Accept": "application/json", "Authorization": f"Bearer {api_key}"},
+                timeout=10,
+            )
+            data = r.json()
+            infos = data.get("balance_infos", [])
+            if infos:
+                info = infos[0]
+                return {
+                    "balance": float(info.get("total_balance", 0)),
+                    "granted": float(info.get("granted_balance", 0)),
+                    "topped_up": float(info.get("topped_up_balance", 0)),
+                    "currency": info.get("currency", "CNY"),
+                }
+            return {"balance": 0, "error": "无余额数据"}
+        except Exception as e:
+            return {"balance": None, "error": str(e)}
 
     @app.get("/api/cost")
     def cost_summary(refresh: str = "0"):
-        global _cost_cache
-        now = time.time()
-        if refresh != "1" and _cost_cache["data"] is not None and (now - _cost_cache["ts"]) < 30:
-            return _cost_cache["data"]
-
-        db = get_db()
-        bal_data = {"assets_yuan": 0.0, "accumulate_yuan": 0.0, "voucher_balance": 0.0}
+        # AutoDL
+        server_balance = 0.0
+        server_spent = 0.0
         if _has_token():
             try:
-                api = _get_api()
-                raw = api.get_balance()
-                bal_data["assets_yuan"] = raw.get("assets_yuan", 0)
-                bal_data["accumulate_yuan"] = raw.get("accumulate_yuan", 0)
-                bal_data["voucher_balance"] = raw.get("voucher_balance", 0)
+                bal = _get_api().get_balance()
+                server_balance = bal.get("assets_yuan", 0)
+                server_spent = bal.get("accumulate_yuan", 0)
             except Exception:
-                if _cost_cache["data"] is not None:
-                    bal_data["assets_yuan"] = _cost_cache["data"].get("balance_yuan", 0)
-                    bal_data["accumulate_yuan"] = _cost_cache["data"].get("total_spent", 0)
+                pass
 
-        runway = db.predict_runway(bal_data["assets_yuan"])
-        result = {
-            **runway,
-            "total_spent": bal_data["accumulate_yuan"],
-            "voucher_balance": bal_data["voucher_balance"],
-            "ai_total_tokens": _ai_usage["total_tokens"],
-            "ai_total_calls": _ai_usage["total_calls"],
-            "ai_estimated_cost_yuan": _ai_usage["estimated_cost_yuan"],
+        # DeepSeek
+        ai = _query_deepseek_balance() if refresh == "1" else {"balance": None}
+        ai_balance = ai.get("balance")
+
+        # Total
+        total = server_balance + (ai_balance or 0)
+
+        return {
+            "server_balance": server_balance,
+            "server_spent": server_spent,
+            "ai_balance": ai_balance,
+            "ai_granted": ai.get("granted", 0) if ai_balance is not None else None,
+            "ai_topped_up": ai.get("topped_up", 0) if ai_balance is not None else None,
+            "ai_calls": _ai_calls,
+            "total_balance": round(total, 2),
         }
-        _cost_cache = {"ts": now, "data": result}
-        return result
 
     # ─── REST API: 告警 ───
 
@@ -639,23 +659,11 @@ def create_app() -> FastAPI:
 
         try:
             from .agent.agent_loop import run_agent_query
-            import tiktoken
-            # 估算 token 数
-            try:
-                enc = tiktoken.get_encoding("cl100k_base")
-                input_tokens = len(enc.encode(query))
-            except Exception:
-                input_tokens = len(query) * 2  # 粗略估算
             result = await run_agent_query(
                 query, api_key=api_key, api_base=api_base, model=model,
                 return_steps=True,
             )
-            # 估算输出 token
-            try:
-                output_tokens = len(enc.encode(result["answer"]))
-            except Exception:
-                output_tokens = len(result["answer"]) * 2
-            _track_ai_usage(input_tokens + output_tokens)
+            _track_ai_call()
             _sse_broadcast("agent_response", {"query": query, "answer": result["answer"]})
             return {"query": query, "answer": result["answer"], "steps": result["steps"]}
         except Exception as e:

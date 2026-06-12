@@ -145,7 +145,7 @@ const stats = computed(() => ({
 }))
 
 const balanceDisplay = computed(() => {
-  if (costData.value.balance_yuan != null) return costData.value.balance_yuan.toFixed(2)
+  if (costData.value.total_balance != null) return costData.value.total_balance.toFixed(2)
   return '--'
 })
 

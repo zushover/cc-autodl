@@ -44,16 +44,13 @@ export interface InstancesResponse {
 }
 
 export interface CostData {
-  balance_yuan: number
-  today_cost: number
-  week_cost: number
-  total_spent: number
-  voucher_balance: number
-  daily_rate_yuan: number
-  runway_days: number | null
-  ai_total_tokens?: number
-  ai_total_calls?: number
-  ai_estimated_cost_yuan?: number
+  server_balance: number
+  server_spent: number
+  ai_balance: number | null
+  ai_granted: number | null
+  ai_topped_up: number | null
+  ai_calls: number
+  total_balance: number
 }
 
 export interface ProbeResult {
