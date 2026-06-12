@@ -473,26 +473,33 @@ def create_app() -> FastAPI:
         nonlocal _cost_cache
         now = time.time()
 
-        # 缓存30秒，refresh=1 强制刷新
-        if refresh != "1" and _cost_cache["data"] is not None and (now - _cost_cache["ts"]) < 30:
+        # 缓存60秒，refresh=1 强制刷新
+        if refresh != "1" and _cost_cache["data"] is not None and (now - _cost_cache["ts"]) < 60:
             return _cost_cache["data"]
 
-        # AutoDL
+        # 并行查询 AutoDL + DeepSeek
+        import concurrent.futures
         server_balance = 0.0
         server_spent = 0.0
-        if _has_token():
+        ai_result = {"balance": None}
+
+        def query_autodl():
+            if not _has_token():
+                return (0.0, 0.0)
             try:
                 bal = _get_api().get_balance()
-                server_balance = bal.get("assets_yuan", 0)
-                server_spent = bal.get("accumulate_yuan", 0)
+                return (bal.get("assets_yuan", 0), bal.get("accumulate_yuan", 0))
             except Exception:
-                pass
+                return (0.0, 0.0)
 
-        # DeepSeek — 每次都查（有缓存兜底）
-        ai = _query_deepseek_balance()
-        ai_balance = ai.get("balance")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            fut_ad = pool.submit(query_autodl)
+            fut_ai = pool.submit(_query_deepseek_balance)
+            server_balance, server_spent = fut_ad.result(timeout=8)
+            ai_result = fut_ai.result(timeout=8)
+
+        ai_balance = ai_result.get("balance")
         if ai_balance is None and _cost_cache["data"] is not None:
-            # 失败时用缓存
             ai_balance = _cost_cache["data"].get("ai_balance")
 
         total = server_balance + (ai_balance or 0)
@@ -501,8 +508,8 @@ def create_app() -> FastAPI:
             "server_balance": server_balance,
             "server_spent": server_spent,
             "ai_balance": ai_balance,
-            "ai_granted": ai.get("granted", 0) if ai_balance is not None else None,
-            "ai_topped_up": ai.get("topped_up", 0) if ai_balance is not None else None,
+            "ai_granted": ai_result.get("granted", 0) if ai_balance is not None else None,
+            "ai_topped_up": ai_result.get("topped_up", 0) if ai_balance is not None else None,
             "ai_calls": _ai_calls,
             "total_balance": round(total, 2),
         }
