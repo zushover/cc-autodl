@@ -347,6 +347,45 @@ def delegate_to_server(uuid: str, task: str) -> str:
     return execute_on_server(uuid, f"source ~/.claude/env.sh 2>/dev/null; claude -p {repr(task)}")
 
 
+@tool
+def save_to_knowledge_base(category: str, title: str, content: str) -> str:
+    """把内容保存到知识库（ChromaDB），供后续检索。
+
+    适合用户在对话中说"记住这个实验结果"、"保存到知识库"、
+    "记录一下"等场景。Agent 应主动将重要的实验数据、分析结论、配置参数写入。
+
+    Args:
+        category: 类别。experiment（实验）/ note（笔记）/ doc（文档）/ decision（决策）
+        title: 标题（简短描述）
+        content: 要保存的完整内容
+
+    Returns:
+        保存结果。
+    """
+    from pathlib import Path
+    import yaml
+    import json
+
+    # 写 ChromaDB
+    try:
+        from .memory import AgentMemory
+        mem = AgentMemory()
+        if category == "experiment":
+            mem.add_experiment(exp_id=title, config={"saved_at": __import__('datetime').datetime.now().isoformat()},
+                              results={"content": content}, notes=content[:200])
+        elif category == "decision":
+            mem.add_decision(context=title, chosen_action=content[:500])
+        else:
+            mem.conversations.add(
+                documents=[f"[{category}] {title}\n{content}"],
+                metadatas=[{"category": category, "title": title, "timestamp": __import__('datetime').datetime.now().isoformat()}],
+                ids=[f"kb-{category}-{__import__('time').time()}"]
+            )
+        return f"已保存到知识库 [{category}] {title}"
+    except Exception as e:
+        return f"保存失败: {e}"
+
+
 # ─── 工具注册表 ───
 
 ALL_TOOLS = [
@@ -357,4 +396,5 @@ ALL_TOOLS = [
     probe_instance_health,
     execute_on_server,
     delegate_to_server,
+    save_to_knowledge_base,
 ]

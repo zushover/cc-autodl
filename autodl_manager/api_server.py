@@ -988,12 +988,39 @@ def create_app() -> FastAPI:
     # ─── Agent Memory API：共享记忆层 ───
 
     @app.get("/api/memory/conversations")
-    async def memory_conversations(n: int = Query(10, ge=1, le=100)):
+    async def memory_conversations(n: int = Query(50, ge=1, le=200)):
         """获取最近的 N 轮 Agent 对话记忆。"""
         from .agent.memory import AgentMemory
         mem = AgentMemory()
         conversations = mem.get_recent_conversations(n)
         return {"count": len(conversations), "conversations": conversations}
+
+    @app.get("/api/knowledge/all")
+    async def knowledge_all():
+        """获取知识库全部内容（对话 + 实验 + 决策）。"""
+        from .agent.memory import AgentMemory
+        mem = AgentMemory()
+        items = []
+        # 对话
+        cr = mem.conversations.get()
+        if cr and cr["documents"]:
+            for i, doc in enumerate(cr["documents"]):
+                items.append({"id": cr["ids"][i], "type": "conversation", "content": doc[:500],
+                              "timestamp": (cr["metadatas"][i] or {}).get("timestamp", "") if cr["metadatas"] else ""})
+        # 实验
+        er = mem.experiments.get()
+        if er and er["documents"]:
+            for i, doc in enumerate(er["documents"]):
+                items.append({"id": er["ids"][i], "type": "experiment", "content": doc[:500],
+                              "timestamp": (er["metadatas"][i] or {}).get("timestamp", "") if er["metadatas"] else ""})
+        # 决策
+        dr = mem.decisions.get()
+        if dr and dr["documents"]:
+            for i, doc in enumerate(dr["documents"]):
+                items.append({"id": dr["ids"][i], "type": "decision", "content": doc[:500],
+                              "timestamp": (dr["metadatas"][i] or {}).get("timestamp", "") if dr["metadatas"] else ""})
+        items.sort(key=lambda x: x["timestamp"], reverse=True)
+        return {"items": items[:50], "total": len(items)}
 
     @app.post("/api/memory/conversations")
     async def memory_add_conversation(request: Request):

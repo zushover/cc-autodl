@@ -84,6 +84,39 @@ const agentQuery = ref('')
 const agentLoading = ref(false)
 const agentMemoryStats = ref({ conversations: 0, experiments: 0, decisions: 0 })
 
+// ── 知识库状态（在 App.vue 中，永不丢失）──
+const kbEntries = ref<{ id: string; content: string; timestamp: string }[]>([])
+const kbLoading = ref(false)
+const kbQuery = ref('')
+
+async function loadKnowledgeBase() {
+  kbLoading.value = true
+  try {
+    const res = await fetch('http://127.0.0.1:8899/api/knowledge/all')
+    const data = await res.json()
+    kbEntries.value = (data.items || []).map((item: any) => ({
+      id: item.id || 'kb-' + Math.random(),
+      content: `[${item.type}] ${item.content || ''}`,
+      timestamp: item.timestamp || '',
+    }))
+  } catch (_) { /* ignore */ }
+  kbLoading.value = false
+}
+
+async function kbSearch(q: string) {
+  kbQuery.value = q
+  if (!q.trim()) { await loadKnowledgeBase(); return }
+  kbLoading.value = true
+  try {
+    const res = await fetch('http://127.0.0.1:8899/api/memory/experiments?q=' + encodeURIComponent(q) + '&n=20')
+    const data = await res.json()
+    kbEntries.value = (data.results || []).map((r: string, i: number) => ({
+      id: 'sr-' + i, content: r, timestamp: ''
+    }))
+  } catch (_) { /* ignore */ }
+  kbLoading.value = false
+}
+
 function agentNow() { return new Date().toLocaleTimeString() }
 
 async function sendAgentQuery(text?: string) {
@@ -343,11 +376,11 @@ let balanceTimer: ReturnType<typeof setInterval> | null = null
 onMounted(async () => {
   await waitForServer()
   serverOnline.value = isServerReady()
-  // 一次性预加载所有数据——首次费用用 refresh=1 拉实时余额
+  // 一次性预加载所有数据
   await Promise.all([refreshInstances(), refreshCost(true), refreshSettings(), refreshAlerts()])
   loading.init = false
-  // 后台再拉一次确保 settings 同步
   refreshAgentMemory()
+  loadKnowledgeBase()  // 预加载知识库
 
   sseStream = createSSEStream(
     (gpu) => { if (gpu.uuid === currentInstance.value?.uuid) gpuData.value = gpu },
@@ -426,6 +459,13 @@ onUnmounted(() => {
 
           <KnowledgeBase
             v-if="currentTab === 'knowledge'"
+            :entries="kbEntries"
+            :loading="kbLoading"
+            :query="kbQuery"
+            :stats="agentMemoryStats"
+            @search="kbSearch($event)"
+            @refresh="loadKnowledgeBase()"
+            @update:query="kbQuery = $event"
           />
 
           <CostAnalysis
