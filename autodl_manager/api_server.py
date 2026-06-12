@@ -688,6 +688,99 @@ def create_app() -> FastAPI:
         except Exception as e:
             return JSONResponse({"error": str(e)}, 500)
 
+    # ─── MCP 协议端点：GPU Monitor Server ───
+
+    @app.get("/mcp/tools")
+    async def mcp_list_tools():
+        """MCP: 列出所有可用 Tool。"""
+        from .agent.mcp_server import MCPServer
+        return {"tools": MCPServer().list_tools()}
+
+    @app.post("/mcp/call")
+    async def mcp_call_tool(request: Request):
+        """MCP: 调用指定 Tool。POST body: {"name": "gpu_status", "arguments": {"uuid": "..."}}"""
+        body = await request.json()
+        from .agent.mcp_server import MCPServer
+        result = MCPServer().call_tool(body.get("name", ""), body.get("arguments", {}))
+        return {"result": result}
+
+    @app.get("/mcp/resources")
+    async def mcp_list_resources():
+        """MCP: 列出所有可用 Resource。"""
+        from .agent.mcp_server import MCPServer
+        return {"resources": MCPServer().list_resources()}
+
+    @app.post("/mcp/read")
+    async def mcp_read_resource(request: Request):
+        """MCP: 读取指定 Resource。POST body: {"uri": "instances://list"}"""
+        body = await request.json()
+        from .agent.mcp_server import MCPServer
+        result = MCPServer().read_resource(body.get("uri", ""))
+        return {"result": result}
+
+    @app.get("/mcp/prompts")
+    async def mcp_list_prompts():
+        """MCP: 列出所有 Prompt 模板。"""
+        from .agent.mcp_server import MCPServer
+        return {"prompts": MCPServer().list_prompts()}
+
+    # ─── Agent Memory API：共享记忆层 ───
+
+    @app.get("/api/memory/conversations")
+    async def memory_conversations(n: int = Query(10, ge=1, le=100)):
+        """获取最近的 N 轮 Agent 对话记忆。"""
+        from .agent.memory import AgentMemory
+        mem = AgentMemory()
+        conversations = mem.get_recent_conversations(n)
+        return {"count": len(conversations), "conversations": conversations}
+
+    @app.post("/api/memory/conversations")
+    async def memory_add_conversation(request: Request):
+        """新增一轮对话记忆。POST body: {"user_msg": "...", "agent_response": "..."}"""
+        body = await request.json()
+        from .agent.memory import AgentMemory
+        mem = AgentMemory()
+        mem.add_conversation(
+            user_msg=body.get("user_msg", ""),
+            agent_response=body.get("agent_response", ""),
+            metadata=body.get("metadata"),
+        )
+        return {"ok": True}
+
+    @app.get("/api/memory/experiments")
+    async def memory_search_experiments(q: str = Query(""), n: int = Query(5, ge=1, le=50)):
+        """搜索相似实验记录。q: 查询文本, n: 返回数量。"""
+        from .agent.memory import AgentMemory
+        mem = AgentMemory()
+        if q:
+            results = mem.find_similar_experiments(q, n)
+        else:
+            results = []
+        return {"query": q, "count": len(results), "results": results}
+
+    @app.post("/api/memory/experiments")
+    async def memory_add_experiment(request: Request):
+        """新增实验记录。POST body: {"exp_id": "...", "config": {...}, "results": {...}, "notes": "..."}"""
+        body = await request.json()
+        from .agent.memory import AgentMemory
+        mem = AgentMemory()
+        mem.add_experiment(
+            exp_id=body.get("exp_id", ""),
+            config=body.get("config", {}),
+            results=body.get("results", {}),
+            notes=body.get("notes", ""),
+        )
+        _sse_broadcast("experiment_added", {"exp_id": body.get("exp_id", "")})
+        return {"ok": True, "total_experiments": mem.get_experiment_count()}
+
+    @app.get("/api/memory/decisions/check")
+    async def memory_check_loop(action: str = Query("")):
+        """检查拟执行的动作是否有循环风险。"""
+        from .agent.memory import AgentMemory
+        mem = AgentMemory()
+        risk = mem.check_loop_risk(action)
+        return {"action": action, "loop_risk": risk}
+
     # ─── SSE 实时流 ───
 
     @app.get("/api/stream")

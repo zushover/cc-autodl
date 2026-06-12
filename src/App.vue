@@ -16,12 +16,14 @@ import CostAnalysis from './components/CostAnalysis.vue'
 import LogTerminal from './components/LogTerminal.vue'
 import SettingsPanel from './components/SettingsPanel.vue'
 import RegisterDialog from './components/RegisterDialog.vue'
+import AgentLog from './components/AgentLog.vue'
 
 // ── State ──
 
 const tabs: Tab[] = [
   { id: 'dashboard', label: '仪表盘', icon: '📊' },
   { id: 'instances', label: '实例列表', icon: '🖥' },
+  { id: 'agent', label: 'AI Agent', icon: '🤖' },
   { id: 'cost', label: '费用分析', icon: '💰' },
   { id: 'logs', label: '日志终端', icon: '📋' },
   { id: 'settings', label: '设置', icon: '⚙' },
@@ -240,6 +242,10 @@ onUnmounted(() => {
           @setCurrent="doSetCurrent"
           @probe="doProbe"
           @remove="doRemove"
+        />
+
+        <AgentLog
+          v-if="currentTab === 'agent'"
         />
 
         <CostAnalysis
