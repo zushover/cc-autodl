@@ -473,37 +473,54 @@ def create_app() -> FastAPI:
         nonlocal _cost_cache
         now = time.time()
 
-        # 缓存60秒，refresh=1 强制刷新
-        if refresh != "1" and _cost_cache["data"] is not None and (now - _cost_cache["ts"]) < 60:
+        # 有缓存且未强制刷新 → 直接返回
+        if refresh != "1" and _cost_cache["data"] is not None:
             return _cost_cache["data"]
 
-        # 并行查询 AutoDL + DeepSeek
+        # 如果已有缓存，先返回旧的，后台更新
+        if refresh == "1" and _cost_cache["data"] is not None:
+            import threading
+            def _bg_refresh():
+                try:
+                    _do_refresh_cost()
+                except Exception:
+                    pass
+            threading.Thread(target=_bg_refresh, daemon=True).start()
+            return _cost_cache["data"]
+
+        # 无缓存时同步查询
+        return _do_refresh_cost()
+
+    def _do_refresh_cost():
+        nonlocal _cost_cache
         import concurrent.futures
         server_balance = 0.0
         server_spent = 0.0
         ai_result = {"balance": None}
 
-        def query_autodl():
-            if not _has_token():
-                return (0.0, 0.0)
+        def _q_ad():
+            if not _has_token(): return (0.0, 0.0)
             try:
-                bal = _get_api().get_balance()
-                return (bal.get("assets_yuan", 0), bal.get("accumulate_yuan", 0))
+                b = _get_api().get_balance()
+                return (b.get("assets_yuan", 0), b.get("accumulate_yuan", 0))
             except Exception:
                 return (0.0, 0.0)
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-            fut_ad = pool.submit(query_autodl)
-            fut_ai = pool.submit(_query_deepseek_balance)
-            server_balance, server_spent = fut_ad.result(timeout=8)
-            ai_result = fut_ai.result(timeout=8)
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                f1 = pool.submit(_q_ad)
+                f2 = pool.submit(_query_deepseek_balance)
+                server_balance, server_spent = f1.result(timeout=6)
+                ai_result = f2.result(timeout=6)
+        except Exception:
+            if _cost_cache["data"] is not None:
+                return _cost_cache["data"]
 
         ai_balance = ai_result.get("balance")
         if ai_balance is None and _cost_cache["data"] is not None:
             ai_balance = _cost_cache["data"].get("ai_balance")
 
         total = server_balance + (ai_balance or 0)
-
         result = {
             "server_balance": server_balance,
             "server_spent": server_spent,
@@ -513,7 +530,7 @@ def create_app() -> FastAPI:
             "ai_calls": _ai_calls,
             "total_balance": round(total, 2),
         }
-        _cost_cache = {"ts": now, "data": result}
+        _cost_cache = {"ts": time.time(), "data": result}
         return result
 
     # ─── REST API: 告警 ───
@@ -687,6 +704,72 @@ def create_app() -> FastAPI:
             return {"query": query, "answer": result["answer"], "steps": result["steps"]}
         except Exception as e:
             return JSONResponse({"error": f"Agent 执行失败: {e}"}, 500)
+
+    @app.post("/api/agent/stream")
+    async def agent_stream(request: Request):
+        """Agent 流式查询 — SSE 实时推送每一步决策。
+
+        POST body: {"query": "检查所有GPU实例"}
+        返回 SSE 事件流: thinking / tool_call / tool_result / text / done
+        """
+        body = await request.json()
+        query = body.get("query", "").strip()
+        if not query:
+            return JSONResponse({"error": "query 必填"}, 400)
+
+        config = _load_config()
+        llm_config = config.get("llm", {})
+        api_key = llm_config.get("api_key", "")
+        api_base = llm_config.get("api_base", "https://api.deepseek.com/v1")
+        model = llm_config.get("model", "deepseek-v4-pro")
+
+        if not api_key:
+            return JSONResponse({"error": "LLM API Key 未配置"}, 400)
+
+        from .agent.agent_loop import create_agent_loop
+        from langchain_core.messages import HumanMessage
+
+        app = create_agent_loop(api_key=api_key, api_base=api_base, model=model)
+
+        async def generate():
+            # 发送开始事件
+            yield f"data: {json.dumps({'type': 'start', 'query': query})}\n\n"
+
+            try:
+                full_answer = ""
+                async for event in app.astream_events(
+                    {"messages": [HumanMessage(content=query)]},
+                    version="v2",
+                ):
+                    kind = event.get("event", "")
+                    name = event.get("name", "")
+
+                    if kind == "on_chat_model_stream":
+                        chunk = event["data"]["chunk"]
+                        if hasattr(chunk, "tool_calls") and chunk.tool_calls:
+                            for tc in chunk.tool_calls:
+                                if tc.get("name"):
+                                    yield f"data: {json.dumps({'type': 'tool_call', 'tool': tc.get('name', ''), 'args': tc.get('args', {})})}\n\n"
+                        if hasattr(chunk, "content") and chunk.content:
+                            text = chunk.content
+                            if isinstance(text, str) and text.strip():
+                                full_answer += text
+                                yield f"data: {json.dumps({'type': 'text', 'content': text})}\n\n"
+
+                    elif kind == "on_tool_start":
+                        yield f"data: {json.dumps({'type': 'tool_start', 'tool': name, 'input': event['data'].get('input', {})})}\n\n"
+
+                    elif kind == "on_tool_end":
+                        output = str(event["data"].get("output", ""))[:1000]
+                        yield f"data: {json.dumps({'type': 'tool_result', 'tool': name, 'output': output})}\n\n"
+
+                _track_ai_call()
+                yield f"data: {json.dumps({'type': 'done', 'answer': full_answer})}\n\n"
+
+            except Exception as e:
+                yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+        return StreamingResponse(generate(), media_type="text/event-stream")
 
     @app.post("/api/agent/orchestrate")
     async def agent_orchestrate(request: Request):

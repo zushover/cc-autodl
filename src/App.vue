@@ -96,44 +96,71 @@ async function sendAgentQuery(text?: string) {
   conv.steps.push({ id: Date.now(), timestamp: agentNow(), type: 'user', content: q })
   agentConversations.value.push(conv)
 
-  // thinking
+  // 等待指示器
   const tid = Date.now()
-  conv.steps.push({ id: tid, timestamp: agentNow(), type: 'thinking', content: '正在分析请求...' })
+  conv.steps.push({ id: tid, timestamp: agentNow(), type: 'thinking', content: '正在分析...' })
 
   try {
-    const res = await fetch('http://127.0.0.1:8899/api/agent/query', {
+    const res = await fetch('http://127.0.0.1:8899/api/agent/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json; charset=utf-8' },
       body: JSON.stringify({ query: q }),
     })
-    const data = await res.json()
 
-    // 移除 thinking
+    if (!res.ok) throw new Error('Server error')
+
+    const reader = res.body!.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let answerText = ''
+
+    // 移除等待指示器
     conv.steps = conv.steps.filter(s => s.id !== tid)
 
-    if (data.steps && Array.isArray(data.steps)) {
-      for (const s of data.steps) {
-        if (s.type === 'user_input') continue
-        if (s.type === 'tool_call') {
-          const args = s.tool_args ? JSON.stringify(s.tool_args) : ''
-          const shortArgs = args.length > 200 ? args.slice(0, 200) + '...' : args
-          conv.steps.push({ id: Date.now(), timestamp: agentNow(), type: 'tool_call', content: shortArgs ? '参数: ' + shortArgs : '', toolName: s.tool_name })
-        } else if (s.type === 'tool_result') {
-          const c = (s.content || '').length > 500 ? (s.content || '').slice(0, 500) + '...' : (s.content || '')
-          conv.steps.push({ id: Date.now(), timestamp: agentNow(), type: 'tool_result', content: c, toolName: s.tool_name })
-        } else if (s.type === 'thinking' && s.content) {
-          conv.steps.push({ id: Date.now(), timestamp: agentNow(), type: 'thinking', content: s.content })
-        }
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        try {
+          const data = JSON.parse(line.slice(6))
+
+          if (data.type === 'tool_call' || data.type === 'tool_start') {
+            conv.steps.push({ id: Date.now(), timestamp: agentNow(), type: 'tool_call', toolName: data.tool, content: data.args ? JSON.stringify(data.args).slice(0, 100) : '' })
+          } else if (data.type === 'tool_result') {
+            conv.steps.push({ id: Date.now(), timestamp: agentNow(), type: 'tool_result', toolName: data.tool, content: (data.output || '').slice(0, 300) })
+          } else if (data.type === 'text') {
+            answerText += data.content
+            // 找到最后一个 answer step 或创建新的
+            const last = conv.steps[conv.steps.length - 1]
+            if (last && last.type === 'answer') {
+              last.content = answerText
+            } else {
+              conv.steps.push({ id: Date.now(), timestamp: agentNow(), type: 'answer', content: answerText })
+            }
+          } else if (data.type === 'done') {
+            if (data.answer) {
+              const last = conv.steps[conv.steps.length - 1]
+              if (last && last.type === 'answer') {
+                last.content = data.answer
+              } else if (data.answer) {
+                conv.steps.push({ id: Date.now(), timestamp: agentNow(), type: 'answer', content: data.answer })
+              }
+            }
+          } else if (data.type === 'error') {
+            conv.steps.push({ id: Date.now(), timestamp: agentNow(), type: 'answer', content: '错误: ' + data.message })
+          }
+        } catch (_) { /* skip malformed */ }
       }
     }
-
-    if (data.answer) {
-      conv.steps.push({ id: Date.now(), timestamp: agentNow(), type: 'answer', content: data.answer })
-    } else if (data.error) {
-      conv.steps.push({ id: Date.now(), timestamp: agentNow(), type: 'answer', content: '错误: ' + data.error })
-    }
   } catch (e: unknown) {
-    conv.steps.push({ id: Date.now(), timestamp: agentNow(), type: 'answer', content: '连接失败: 请确认服务已启动 (python sidecar.py)' })
+    conv.steps = conv.steps.filter(s => s.id !== tid)
+    conv.steps.push({ id: Date.now(), timestamp: agentNow(), type: 'answer', content: '连接失败: 请确认服务已启动' })
   }
 
   agentLoading.value = false
