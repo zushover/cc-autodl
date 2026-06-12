@@ -84,6 +84,40 @@ def create_agent_loop(
     return graph.compile()
 
 
+# ─── 步骤提取 ───
+
+def _extract_steps(messages: list) -> list[dict]:
+    """从完整的消息历史中提取步骤列表，供前端展示 Agent 决策过程。"""
+    steps = []
+    for i, msg in enumerate(messages):
+        if hasattr(msg, "type"):
+            if msg.type == "human":
+                steps.append({"step": i, "type": "user_input", "content": msg.content})
+            elif msg.type == "ai":
+                if hasattr(msg, "tool_calls") and msg.tool_calls:
+                    for tc in msg.tool_calls:
+                        steps.append({
+                            "step": i,
+                            "type": "tool_call",
+                            "tool_name": tc.get("name", "unknown"),
+                            "tool_args": tc.get("args", {}),
+                        })
+                if msg.content:
+                    steps.append({
+                        "step": i,
+                        "type": "thinking" if not hasattr(msg, "tool_calls") or not msg.tool_calls else "thinking",
+                        "content": msg.content[:500] if msg.content else "",
+                    })
+            elif msg.type == "tool":
+                steps.append({
+                    "step": i,
+                    "type": "tool_result",
+                    "tool_name": msg.name if hasattr(msg, "name") else "",
+                    "content": msg.content[:500] if msg.content else "",
+                })
+    return steps
+
+
 # ─── 便捷调用 ───
 
 async def run_agent_query(
@@ -91,23 +125,29 @@ async def run_agent_query(
     api_key: str = "",
     api_base: str = "https://api.deepseek.com/v1",
     model: str = "deepseek-chat",
-) -> str:
+    return_steps: bool = False,
+) -> str | dict:
     """执行一次 Agent 查询。
 
     Args:
-        query: 用户自然语言请求。例如：
-            "检查所有GPU实例"
-            "哪些实例利用率低于10%？"
-            "帮我关掉空闲的GPU"
-            "余额还有多少？"
+        query: 用户自然语言请求。
         api_key: LLM API 密钥
         api_base: API 地址
         model: 模型名称
+        return_steps: 是否返回中间步骤（前端展示用）
 
     Returns:
-        Agent 的最终回答文本。
+        若 return_steps=False: Agent 的最终回答文本。
+        若 return_steps=True: {"answer": "...", "steps": [...]}
     """
     app = create_agent_loop(api_key=api_key, api_base=api_base, model=model)
     result = await app.ainvoke({"messages": [HumanMessage(content=query)]})
-    last_message = result["messages"][-1]
+    messages = result["messages"]
+    last_message = messages[-1]
+
+    if return_steps:
+        return {
+            "answer": last_message.content,
+            "steps": _extract_steps(messages),
+        }
     return last_message.content

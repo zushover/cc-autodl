@@ -1,54 +1,82 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 
-interface AgentStep {
+interface ApiStep {
+  step: number
+  type: 'user_input' | 'thinking' | 'tool_call' | 'tool_result'
+  content?: string
+  tool_name?: string
+  tool_args?: Record<string, unknown>
+}
+
+interface DisplayStep {
   id: number
   timestamp: string
   type: 'thinking' | 'tool_call' | 'tool_result' | 'answer'
   content: string
   toolName?: string
-  duration?: number
 }
 
-const steps = ref<AgentStep[]>([])
+const steps = ref<DisplayStep[]>([])
 const query = ref('')
 const loading = ref(false)
 const memoryStats = ref({ conversations: 0, experiments: 0, decisions: 0 })
 
-function addStep(type: AgentStep['type'], content: string, toolName?: string) {
+function addStep(type: DisplayStep['type'], content: string, toolName?: string) {
   steps.value.push({
-    id: Date.now(),
+    id: Date.now() + Math.random(),
     timestamp: new Date().toLocaleTimeString(),
     type,
     content,
     toolName,
   })
-  // 自动滚动到底部
 }
 
 async function sendQuery() {
   if (!query.value.trim() || loading.value) return
   loading.value = true
-  addStep('thinking', `用户请求: ${query.value}`)
+  const userQuery = query.value
+  query.value = ''
+  addStep('thinking', `用户: ${userQuery}`)
 
   try {
     const res = await fetch('http://127.0.0.1:8899/api/agent/query', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json; charset=utf-8' },
-      body: JSON.stringify({ query: query.value }),
+      body: JSON.stringify({ query: userQuery }),
     })
     const data = await res.json()
+
+    if (data.steps && Array.isArray(data.steps)) {
+      // 渲染后端返回的每一步
+      for (const s of data.steps as ApiStep[]) {
+        if (s.type === 'user_input') continue  // 跳过用户输入（已显示）
+        if (s.type === 'tool_call') {
+          const args = s.tool_args ? JSON.stringify(s.tool_args) : ''
+          const shortArgs = args.length > 100 ? args.slice(0, 100) + '...' : args
+          addStep('tool_call', `调用参数: ${shortArgs}`, s.tool_name)
+        } else if (s.type === 'tool_result') {
+          const content = (s.content || '').length > 300
+            ? (s.content || '').slice(0, 300) + '...'
+            : (s.content || '')
+          addStep('tool_result', content, s.tool_name)
+        } else if (s.type === 'thinking' && s.content) {
+          addStep('thinking', s.content)
+        }
+      }
+    }
+
     if (data.answer) {
       addStep('answer', data.answer)
     } else if (data.error) {
       addStep('answer', `错误: ${data.error}`)
     }
   } catch (e: unknown) {
-    addStep('answer', `连接失败: ${e instanceof Error ? e.message : String(e)}`)
+    addStep('answer', `连接失败: ${e instanceof Error ? e.message : String(e)}。请确认服务已启动: python sidecar.py`)
   }
 
   loading.value = false
-  query.value = ''
+  loadMemoryStats()
 }
 
 async function loadMemoryStats() {
@@ -59,12 +87,12 @@ async function loadMemoryStats() {
   } catch (_) { /* ignore */ }
 }
 
-const typeConfig = computed(() => ({
+const typeConfig: Record<string, { icon: string; color: string; label: string }> = {
   thinking: { icon: '🧠', color: '#a78bfa', label: '思考' },
   tool_call: { icon: '🔧', color: '#60a5fa', label: '调用工具' },
   tool_result: { icon: '📊', color: '#4ade80', label: '工具返回' },
   answer: { icon: '💬', color: '#fbbf24', label: '回答' },
-}))
+}
 </script>
 
 <template>
@@ -103,10 +131,11 @@ const typeConfig = computed(() => ({
       <div v-if="steps.length === 0" style="color:#52525b;text-align:center;padding:40px;">
         输入自然语言请求，观察 Agent 的思考→决策→执行过程
       </div>
-      <div v-for="step in steps" :key="step.id" style="margin-bottom:12px;padding:10px 12px;background:#18181b;border-radius:8px;border-left:3px solid v-bind(typeConfig[step.type]?.color || '#52525b');">
+      <div v-for="step in steps" :key="step.id" style="margin-bottom:12px;padding:10px 12px;background:#18181b;border-radius:8px;"
+        :style="{ borderLeft: '3px solid ' + (typeConfig[step.type]?.color || '#52525b') }">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
           <span style="font-size:14px;">{{ typeConfig[step.type]?.icon }}</span>
-          <span style="font-size:12px;font-weight:600;color:v-bind(typeConfig[step.type]?.color || '#a1a1aa')">
+          <span style="font-size:12px;font-weight:600;" :style="{ color: typeConfig[step.type]?.color }">
             {{ typeConfig[step.type]?.label }}
           </span>
           <span v-if="step.toolName" style="font-size:12px;color:#60a5fa;background:rgba(96,165,250,0.1);padding:1px 6px;border-radius:4px;">{{ step.toolName }}</span>

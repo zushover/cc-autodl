@@ -620,9 +620,12 @@ def create_app() -> FastAPI:
 
         try:
             from .agent.agent_loop import run_agent_query
-            result = await run_agent_query(query, api_key=api_key, api_base=api_base, model=model)
-            _sse_broadcast("agent_response", {"query": query, "answer": result})
-            return {"query": query, "answer": result}
+            result = await run_agent_query(
+                query, api_key=api_key, api_base=api_base, model=model,
+                return_steps=True,
+            )
+            _sse_broadcast("agent_response", {"query": query, "answer": result["answer"]})
+            return {"query": query, "answer": result["answer"], "steps": result["steps"]}
         except Exception as e:
             return JSONResponse({"error": f"Agent 执行失败: {e}"}, 500)
 
