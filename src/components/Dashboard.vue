@@ -16,7 +16,29 @@ const emit = defineEmits<{
 }>()
 
 const probeAnim = ref(false)
+const deploying = ref(false)
 watch(() => props.loading.probe, v => { if (v) probeAnim.value = true })
+
+async function doDeploy() {
+  if (!props.currentInstance || deploying.value) return
+  deploying.value = true
+  try {
+    const res = await fetch(`http://127.0.0.1:8899/api/instances/${props.currentInstance.uuid}/deploy`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      body: JSON.stringify({}),
+    })
+    const data = await res.json()
+    if (data.success) {
+      alert(`Claude Code 已部署到服务器!\n\n连接: tmux attach -t claude-code\n\n${data.log?.join('\n') || ''}`)
+    } else {
+      alert('部署失败: ' + (data.error || '未知错误'))
+    }
+  } catch (e: unknown) {
+    alert('部署请求失败: ' + (e instanceof Error ? e.message : '网络错误'))
+  }
+  deploying.value = false
+}
 
 function sb(s: string) { return s==='running'||s==='reachable'?'running':s==='no_gpu'?'warning':'stopped' }
 function sl(s: string) { const m: Record<string,string>={running:'运行中',stopped:'已关机',no_gpu:'无卡',reachable:'可达'}; return m[s]||s }
@@ -60,6 +82,11 @@ function memPercent(used: number|null|undefined, total: number|null|undefined): 
           <span v-if="currentInstance.price_per_hour" style="font-size:12px;color:var(--text-dim);">¥{{ currentInstance.price_per_hour }}/h</span>
         </div>
         <div style="display:flex;gap:5px;">
+          <!-- ☀️ 一键部署 Claude Code -->
+          <button class="btn btn-primary" @click="doDeploy" :disabled="deploying" style="font-size:12px;" title="一键部署 Claude Code 到服务器">
+            <svg width="14" height="14" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="24" cy="24" r="5"/><path d="M24 2v6m0 32v6M8.5 8.5l4.2 4.2m22.6 22.6l4.2 4.2M2 24h6m32 0h6M8.5 39.5l4.2-4.2m22.6-22.6l4.2-4.2"/></svg>
+            {{ deploying ? '部署中' : '部署 CC' }}
+          </button>
           <button class="btn" @click="emit('probe')" :disabled="loading.probe" style="font-size:12px;">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
             {{ loading.probe ? '探测中' : '探测' }}

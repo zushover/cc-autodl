@@ -129,34 +129,41 @@ async function sendAgentQuery(text?: string) {
         if (!line.startsWith('data: ')) continue
         try {
           const data = JSON.parse(line.slice(6))
+          const now = agentNow()
 
           if (data.type === 'tool_call' || data.type === 'tool_start') {
-            conv.steps.push({ id: Date.now(), timestamp: agentNow(), type: 'tool_call', toolName: data.tool, content: data.args ? JSON.stringify(data.args).slice(0, 100) : '' })
+            conv.steps = [...conv.steps, { id: Date.now(), timestamp: now, type: 'tool_call', toolName: data.tool, content: data.args ? JSON.stringify(data.args).slice(0, 100) : '' }]
           } else if (data.type === 'tool_result') {
-            conv.steps.push({ id: Date.now(), timestamp: agentNow(), type: 'tool_result', toolName: data.tool, content: (data.output || '').slice(0, 300) })
+            conv.steps = [...conv.steps, { id: Date.now(), timestamp: now, type: 'tool_result', toolName: data.tool, content: (data.output || '').slice(0, 300) }]
           } else if (data.type === 'text') {
             answerText += data.content
-            // 找到最后一个 answer step 或创建新的
-            const last = conv.steps[conv.steps.length - 1]
-            if (last && last.type === 'answer') {
-              last.content = answerText
+            const lastIdx = conv.steps.length - 1
+            if (lastIdx >= 0 && conv.steps[lastIdx].type === 'answer') {
+              // 替换整个 step 触发 Vue 响应
+              const updated = [...conv.steps]
+              updated[lastIdx] = { ...updated[lastIdx], content: answerText }
+              conv.steps = updated
             } else {
-              conv.steps.push({ id: Date.now(), timestamp: agentNow(), type: 'answer', content: answerText })
+              conv.steps = [...conv.steps, { id: Date.now(), timestamp: now, type: 'answer', content: answerText }]
             }
           } else if (data.type === 'done') {
             if (data.answer) {
-              const last = conv.steps[conv.steps.length - 1]
-              if (last && last.type === 'answer') {
-                last.content = data.answer
+              const lastIdx2 = conv.steps.length - 1
+              if (lastIdx2 >= 0 && conv.steps[lastIdx2].type === 'answer') {
+                const updated2 = [...conv.steps]
+                updated2[lastIdx2] = { ...updated2[lastIdx2], content: data.answer }
+                conv.steps = updated2
               } else if (data.answer) {
-                conv.steps.push({ id: Date.now(), timestamp: agentNow(), type: 'answer', content: data.answer })
+                conv.steps = [...conv.steps, { id: Date.now(), timestamp: now, type: 'answer', content: data.answer }]
               }
             }
           } else if (data.type === 'error') {
-            conv.steps.push({ id: Date.now(), timestamp: agentNow(), type: 'answer', content: '错误: ' + data.message })
+            conv.steps = [...conv.steps, { id: Date.now(), timestamp: now, type: 'answer', content: 'Error: ' + data.message }]
           }
-        } catch (_) { /* skip malformed */ }
+        } catch (_) { /* skip */ }
       }
+      // 让 Vue 有机会渲染
+      await new Promise(r => setTimeout(r, 0))
     }
   } catch (e: unknown) {
     conv.steps = conv.steps.filter(s => s.id !== tid)
