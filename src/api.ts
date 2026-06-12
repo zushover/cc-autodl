@@ -127,8 +127,12 @@ export async function loadSettings(): Promise<SettingsData | null> {
   return api<SettingsData>('/api/settings')
 }
 
-export async function saveSettings(token: string, sshKey: string): Promise<{ ok: boolean; error?: string; message?: string } | null> {
-  return api('/api/settings', { method: 'POST', body: JSON.stringify({ token, ssh_key: sshKey }) })
+export async function saveSettings(token: string, sshKey: string, llmApiKey?: string, llmApiBase?: string, llmModel?: string): Promise<{ ok: boolean; error?: string; message?: string } | null> {
+  const body: Record<string, string> = { token, ssh_key: sshKey }
+  if (llmApiKey !== undefined) body.llm_api_key = llmApiKey
+  if (llmApiBase !== undefined) body.llm_api_base = llmApiBase
+  if (llmModel !== undefined) body.llm_model = llmModel
+  return api('/api/settings', { method: 'POST', body: JSON.stringify(body) })
 }
 
 // ─── SSE 实时流 ───

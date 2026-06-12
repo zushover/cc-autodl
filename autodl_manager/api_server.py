@@ -432,15 +432,22 @@ def create_app() -> FastAPI:
         except AutoDLAPIError as e:
             return JSONResponse({"error": str(e)}, 500)
 
-    # ─── REST API: 费用（带缓存，避免每次刷新都调 AutoDL API）───
+    # ─── REST API: 费用（带缓存）───
 
     _cost_cache: dict = {"ts": 0, "data": None}
+    _ai_usage: dict = {"total_tokens": 0, "total_calls": 0, "estimated_cost_yuan": 0.0}
+
+    def _track_ai_usage(tokens: int = 0):
+        """追踪 AI API 用量。DeepSeek v4-pro: ~¥1/百万token。"""
+        _ai_usage["total_tokens"] += tokens
+        _ai_usage["total_calls"] += 1
+        # 估算：DeepSeek 定价约 ¥1/百万token
+        _ai_usage["estimated_cost_yuan"] = round(_ai_usage["total_tokens"] / 1_000_000 * 1.0, 4)
 
     @app.get("/api/cost")
     def cost_summary(refresh: str = "0"):
         global _cost_cache
         now = time.time()
-        # 缓存 30 秒，传 refresh=1 强制刷新
         if refresh != "1" and _cost_cache["data"] is not None and (now - _cost_cache["ts"]) < 30:
             return _cost_cache["data"]
 
@@ -463,6 +470,9 @@ def create_app() -> FastAPI:
             **runway,
             "total_spent": bal_data["accumulate_yuan"],
             "voucher_balance": bal_data["voucher_balance"],
+            "ai_total_tokens": _ai_usage["total_tokens"],
+            "ai_total_calls": _ai_usage["total_calls"],
+            "ai_estimated_cost_yuan": _ai_usage["estimated_cost_yuan"],
         }
         _cost_cache = {"ts": now, "data": result}
         return result
@@ -561,6 +571,9 @@ def create_app() -> FastAPI:
             "token": config.get("auto_dl", {}).get("token", ""),
             "ssh_key": config.get("ssh", {}).get("key_path", ""),
             "ssh_user": config.get("ssh", {}).get("user", "root"),
+            "llm_api_key": config.get("llm", {}).get("api_key", ""),
+            "llm_api_base": config.get("llm", {}).get("api_base", "https://api.deepseek.com/v1"),
+            "llm_model": config.get("llm", {}).get("model", "deepseek-v4-pro"),
         }
 
     @app.post("/api/settings")
@@ -579,11 +592,17 @@ def create_app() -> FastAPI:
             current.setdefault("ssh", {})["key_path"] = body["ssh_key"]
         if "ssh_user" in body:
             current.setdefault("ssh", {})["user"] = body["ssh_user"]
+        if "llm_api_key" in body:
+            current.setdefault("llm", {})["api_key"] = body["llm_api_key"]
+        if "llm_api_base" in body:
+            current.setdefault("llm", {})["api_base"] = body["llm_api_base"]
+        if "llm_model" in body:
+            current.setdefault("llm", {})["model"] = body["llm_model"]
 
         with open(config_path, "w", encoding="utf-8") as f:
             yaml.dump(current, f, allow_unicode=True, default_flow_style=False)
 
-        # 清除缓存，下次调用即使用新 token
+        # 清除缓存
         global _api
         _api = None
 
@@ -620,10 +639,23 @@ def create_app() -> FastAPI:
 
         try:
             from .agent.agent_loop import run_agent_query
+            import tiktoken
+            # 估算 token 数
+            try:
+                enc = tiktoken.get_encoding("cl100k_base")
+                input_tokens = len(enc.encode(query))
+            except Exception:
+                input_tokens = len(query) * 2  # 粗略估算
             result = await run_agent_query(
                 query, api_key=api_key, api_base=api_base, model=model,
                 return_steps=True,
             )
+            # 估算输出 token
+            try:
+                output_tokens = len(enc.encode(result["answer"]))
+            except Exception:
+                output_tokens = len(result["answer"]) * 2
+            _track_ai_usage(input_tokens + output_tokens)
             _sse_broadcast("agent_response", {"query": query, "answer": result["answer"]})
             return {"query": query, "answer": result["answer"], "steps": result["steps"]}
         except Exception as e:

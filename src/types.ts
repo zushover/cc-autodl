@@ -51,6 +51,9 @@ export interface CostData {
   voucher_balance: number
   daily_rate_yuan: number
   runway_days: number | null
+  ai_total_tokens?: number
+  ai_total_calls?: number
+  ai_estimated_cost_yuan?: number
 }
 
 export interface ProbeResult {
@@ -82,6 +85,9 @@ export interface SettingsData {
   ssh_key: string
   ssh_user?: string
   hasToken: boolean
+  llm_api_key?: string
+  llm_api_base?: string
+  llm_model?: string
 }
 
 export type TabId = 'dashboard' | 'instances' | 'agent' | 'cost' | 'logs' | 'settings'
