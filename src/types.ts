@@ -84,7 +84,7 @@ export interface SettingsData {
   hasToken: boolean
 }
 
-export type TabId = 'dashboard' | 'instances' | 'cost' | 'logs' | 'settings'
+export type TabId = 'dashboard' | 'instances' | 'agent' | 'cost' | 'logs' | 'settings'
 
 export interface Tab {
   id: TabId
