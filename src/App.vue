@@ -33,7 +33,7 @@ interface AgentConversation {
 const tabs: Tab[] = [
   { id: 'dashboard', label: '仪表盘', icon: '' },
   { id: 'instances', label: '实例列表', icon: '' },
-  { id: 'agent', label: 'AI Agent', icon: '' },
+  { id: 'agent', label: 'AI Agents', icon: '' },
   { id: 'cost', label: '费用分析', icon: '' },
   { id: 'logs', label: '日志终端', icon: '' },
   { id: 'settings', label: '设置', icon: '' },

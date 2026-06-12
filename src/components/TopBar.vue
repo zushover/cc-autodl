@@ -17,7 +17,7 @@ const emit = defineEmits<{
   <div style="display:flex;align-items:center;justify-content:space-between;padding:0 24px;height:48px;background:var(--bg-card);border-bottom:1px solid var(--border);flex-shrink:0;">
     <!-- 左侧品牌 -->
     <div style="font-weight:700;font-size:14px;letter-spacing:-0.2px;color:var(--text);">
-      autodlagents
+      <span style="font-weight:800;">A</span>utodl<span style="font-weight:800;">A</span>gents
     </div>
 
     <!-- 右侧服务器信息 -->

@@ -24,8 +24,8 @@ const icons: Record<string, string> = {
 
 <template>
   <div style="width:180px;background:var(--bg-sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:14px 10px;flex-shrink:0;">
-    <div style="padding:6px 10px 18px;font-weight:700;font-size:14px;letter-spacing:-0.2px;color:var(--text);">
-      autodlagents
+    <div style="padding:6px 10px 18px;font-size:14px;letter-spacing:-0.2px;color:var(--text);font-weight:600;">
+      <span style="font-weight:800;">A</span>utodl<span style="font-weight:800;">A</span>gents
     </div>
 
     <nav style="flex:1;">
