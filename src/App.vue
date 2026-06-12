@@ -12,6 +12,7 @@ import Loading from './components/Loading.vue'
 import Sidebar from './components/Sidebar.vue'
 import Dashboard from './components/Dashboard.vue'
 import CostAnalysis from './components/CostAnalysis.vue'
+import KnowledgeBase from './components/KnowledgeBase.vue'
 import SettingsPanel from './components/SettingsPanel.vue'
 import RegisterDialog from './components/RegisterDialog.vue'
 import AgentLog from './components/AgentLog.vue'
@@ -31,6 +32,7 @@ interface AgentConversation {
 const tabs: Tab[] = [
   { id: 'dashboard', label: '服务器', icon: '' },
   { id: 'agent', label: 'AI Agents', icon: '' },
+  { id: 'knowledge', label: '知识库', icon: '' },
   { id: 'cost', label: '费用', icon: '' },
   { id: 'settings', label: '设置', icon: '' },
 ]
@@ -375,6 +377,10 @@ onUnmounted(() => {
             :memoryStats="agentMemoryStats"
             @send="sendAgentQuery($event)"
             @update:query="agentQuery = $event"
+          />
+
+          <KnowledgeBase
+            v-if="currentTab === 'knowledge'"
           />
 
           <CostAnalysis

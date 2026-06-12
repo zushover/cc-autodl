@@ -87,7 +87,7 @@ export interface SettingsData {
   llm_model?: string
 }
 
-export type TabId = 'dashboard' | 'instances' | 'agent' | 'cost' | 'logs' | 'settings'
+export type TabId = 'dashboard' | 'instances' | 'agent' | 'knowledge' | 'cost' | 'logs' | 'settings'
 
 export interface Tab {
   id: TabId
