@@ -33,15 +33,15 @@ defineEmits<{ refresh: [] }>()
 
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px;">
       <div class="glass-card">
-        <div style="color:#71717a;font-size:12px;">累计消费</div>
+        <div style="color:var(--text-secondary);font-size:12px;">累计消费</div>
         <div style="font-size:1.3rem;font-weight:700;">¥{{ costData.total_spent?.toFixed(2) || '--' }}</div>
       </div>
       <div class="glass-card">
-        <div style="color:#71717a;font-size:12px;">代金券</div>
+        <div style="color:var(--text-secondary);font-size:12px;">代金券</div>
         <div style="font-size:1.3rem;font-weight:700;">¥{{ costData.voucher_balance?.toFixed(2) || '0.00' }}</div>
       </div>
       <div class="glass-card">
-        <div style="color:#71717a;font-size:12px;">日均消费</div>
+        <div style="color:var(--text-secondary);font-size:12px;">日均消费</div>
         <div style="font-size:1.3rem;font-weight:700;">¥{{ costData.daily_rate_yuan || '0.00' }}</div>
       </div>
     </div>

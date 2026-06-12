@@ -29,11 +29,11 @@ function statusLabel(s: string): string {
     <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
       <span
         style="width:8px;height:8px;border-radius:50%;"
-        :style="{background: inst.status==='running'||inst.status==='reachable'?'#4ade80':inst.status==='no_gpu'?'#facc15':'#71717a'}"
+        :style="{background: inst.status==='running'||inst.status==='reachable'?'#4ade80':inst.status==='no_gpu'?'#facc15':'var(--text-secondary)'}"
       ></span>
       <span style="font-weight:600;font-size:13px;">{{ inst.alias || inst.uuid.slice(0, 14) }}</span>
     </div>
-    <div style="font-size:12px;color:#71717a;">
+    <div style="font-size:12px;color:var(--text-secondary);">
       {{ inst.gpu_type || 'GPU' }} · {{ inst.source }} · {{ statusLabel(inst.status) }}
     </div>
   </div>

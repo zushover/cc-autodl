@@ -40,7 +40,7 @@ function statusLabel(s: string): string {
       </div>
     </div>
 
-    <div v-if="instances.length===0" class="glass-card" style="text-align:center;padding:40px;color:#52525b;">
+    <div v-if="instances.length===0" class="glass-card" style="text-align:center;padding:40px;color:var(--text-dim);">
       暂无实例<br><small>点击「同步 Pro API」或「注册实例」</small>
     </div>
 

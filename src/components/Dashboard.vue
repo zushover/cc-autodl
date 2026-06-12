@@ -44,7 +44,7 @@ function statusLabel(s: string): string {
           <span :class="'badge badge-' + statusBadge(currentInstance.status)">{{ statusLabel(currentInstance.status) }}</span>
           <span :class="'badge badge-' + currentInstance.source" style="margin-left:6px;">{{ currentInstance.source }}</span>
           <strong style="margin-left:8px;font-size:1.1rem;">{{ currentInstance.alias || currentInstance.uuid?.slice(0, 14) }}</strong>
-          <span v-if="currentInstance.gpu_type" style="font-size:13px;color:#71717a;margin-left:8px;">{{ currentInstance.gpu_type }}</span>
+          <span v-if="currentInstance.gpu_type" style="font-size:13px;color:var(--text-secondary);margin-left:8px;">{{ currentInstance.gpu_type }}</span>
         </div>
         <div style="display:flex;gap:6px;">
           <button class="btn" @click="$emit('probe')" :disabled="loading.probe" style="min-width:90px;">
@@ -81,21 +81,21 @@ function statusLabel(s: string): string {
       </div>
 
       <!-- Not probed -->
-      <div v-else-if="!loading.probe && !probeResult" class="glass" style="text-align:center;padding:20px;margin-bottom:12px;color:#52525b;">
+      <div v-else-if="!loading.probe && !probeResult" class="glass" style="text-align:center;padding:20px;margin-bottom:12px;color:var(--text-dim);">
         💡 点击「🔍 探测」获取实时状态
       </div>
 
       <!-- GPU Processes -->
       <div v-if="gpuData.processes && gpuData.processes.length" style="margin-bottom:12px;">
-        <div style="font-size:12px;color:#71717a;margin-bottom:6px;">🏃 运行中的 GPU 进程</div>
+        <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;">🏃 运行中的 GPU 进程</div>
         <div v-for="p in gpuData.processes" :key="p.pid" class="glass" style="padding:8px 12px;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center;">
           <span style="font-size:13px;">{{ p.name }}</span>
-          <span style="font-size:11px;color:#71717a;">PID {{ p.pid }} · {{ p.gpu_mem_mb }}MB</span>
+          <span style="font-size:11px;color:var(--text-secondary);">PID {{ p.pid }} · {{ p.gpu_mem_mb }}MB</span>
         </div>
       </div>
 
       <!-- System Info -->
-      <div v-if="probeResult?.reachable" style="display:flex;gap:16px;font-size:11px;color:#52525b;flex-wrap:wrap;">
+      <div v-if="probeResult?.reachable" style="display:flex;gap:16px;font-size:11px;color:var(--text-dim);flex-wrap:wrap;">
         <span v-if="probeResult.hostname">🖥 {{ probeResult.hostname }}</span>
         <span v-if="probeResult.python">{{ probeResult.python }}</span>
         <span v-if="probeResult.disk">💾 {{ probeResult.disk }}</span>
@@ -103,20 +103,20 @@ function statusLabel(s: string): string {
       </div>
 
       <!-- SSH info -->
-      <div v-if="currentInstance.ssh_host" style="margin-top:8px;font-size:12px;color:#52525b;">
+      <div v-if="currentInstance.ssh_host" style="margin-top:8px;font-size:12px;color:var(--text-dim);">
         SSH: {{ currentInstance.ssh_user }}@{{ currentInstance.ssh_host }}:{{ currentInstance.ssh_port }}
       </div>
     </div>
 
     <!-- No current instance -->
     <div v-if="!currentInstance && !loading.instances" class="glass-card" style="text-align:center;padding:40px;">
-      <div style="font-size:2rem;">🖥️</div><div style="color:#a1a1aa;">未设置当前实例</div>
-      <div style="font-size:13px;color:#52525b;">在「实例列表」中选择或同步 Pro API</div>
+      <div style="font-size:2rem;">🖥️</div><div style="color:var(--text-secondary);">未设置当前实例</div>
+      <div style="font-size:13px;color:var(--text-dim);">在「实例列表」中选择或同步 Pro API</div>
     </div>
 
     <!-- All Instances Grid -->
     <h2 style="font-size:1.05rem;font-weight:600;margin-bottom:12px;">所有实例</h2>
-    <div v-if="instances.length===0" class="glass-card" style="text-align:center;padding:20px;color:#52525b;">暂无实例</div>
+    <div v-if="instances.length===0" class="glass-card" style="text-align:center;padding:20px;color:var(--text-dim);">暂无实例</div>
     <div v-else style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;">
       <InstanceCard
         v-for="inst in instances"

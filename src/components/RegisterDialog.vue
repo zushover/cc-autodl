@@ -135,7 +135,7 @@ defineExpose({ open })
       <!-- Web/SSH mode -->
       <template v-else>
         <div class="form-group">
-          <label>SSH 连接命令 <span style="font-size:11px;color:#71717a;">（粘贴自动解析）</span></label>
+          <label>SSH 连接命令 <span style="font-size:11px;color:var(--text-secondary);">（粘贴自动解析）</span></label>
           <div style="display:flex;gap:6px;">
             <input v-model="form.ssh_string" placeholder="例如: ssh -p 50479 root@connect.bjb2.seetacloud.com" style="flex:1;font-size:12px;" @paste="onPasteSsh">
             <button class="btn" @click="parse" style="white-space:nowrap;">🔍 解析</button>
@@ -149,9 +149,9 @@ defineExpose({ open })
         </div>
 
         <div class="form-group">
-          <label>SSH 密码 <span style="color:#f87171;">*</span> <span style="font-size:11px;color:#71717a;">（AutoDL 控制台复制）</span></label>
+          <label>SSH 密码 <span style="color:#f87171;">*</span> <span style="font-size:11px;color:var(--text-secondary);">（AutoDL 控制台复制）</span></label>
           <input v-model="form.ssh_password" type="password" placeholder="例如: ppPyRVTCfkGr">
-          <div style="font-size:11px;color:#52525b;margin-top:4px;">AutoDL 实例页 → SSH 连接 → 复制密码（非密钥文件）</div>
+          <div style="font-size:11px;color:var(--text-dim);margin-top:4px;">AutoDL 实例页 → SSH 连接 → 复制密码（非密钥文件）</div>
         </div>
 
         <div class="form-row" v-if="form.source==='web'">

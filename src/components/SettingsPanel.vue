@@ -46,12 +46,12 @@ init()
         <input v-model="settings.token" type="password" placeholder="输入 AutoDL 开发者 Token" style="flex:1;">
         <button class="btn btn-primary" @click="save">保存</button>
       </div>
-      <div style="font-size:11px;color:#52525b;margin-top:6px;">获取: autodl.com → 控制台 → 设置 → 开发者 Token</div>
+      <div style="font-size:11px;color:var(--text-dim);margin-top:6px;">获取: autodl.com → 控制台 → 设置 → 开发者 Token</div>
     </div>
 
     <div class="glass-card" style="margin-bottom:12px;">
       <div style="font-weight:600;margin-bottom:12px;">SSH 登录方式说明</div>
-      <div style="font-size:13px;color:#a1a1aa;line-height:1.8;">
+      <div style="font-size:13px;color:var(--text-secondary);line-height:1.8;">
         <strong>🔑 密码登录（推荐，简单）</strong><br>
         每个 AutoDL 实例都有独立的 SSH 密码（如 <code style="background:rgba(255,255,255,0.06);padding:2px 6px;">ppPyRVTCfkGr</code>），<br>
         在 AutoDL 控制台 → 实例 → SSH 连接 → 复制密码。<br>
@@ -65,7 +65,7 @@ init()
 
     <div class="glass-card">
       <div style="font-weight:600;margin-bottom:12px;">系统状态</div>
-      <p style="font-size:13px;color:#71717a;">
+      <p style="font-size:13px;color:var(--text-secondary);">
         <span :style="{color: serverOnline ? '#4ade80' : '#f87171'}">
           后端: {{ serverOnline ? '🟢 在线' : '🔴 离线' }}
         </span>

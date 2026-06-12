@@ -29,7 +29,7 @@ const quickActions = [
 ]
 
 const typeCfg: Record<string, { icon: string; color: string; label: string; bg: string }> = {
-  user:       { icon: '👤', color: '#a1a1aa', label: '你',    bg: '#27272a' },
+  user:       { icon: '👤', color: 'var(--text-secondary)', label: '你',    bg: 'var(--border)' },
   thinking:   { icon: '🧠', color: '#a78bfa', label: '思考',  bg: 'rgba(167,139,250,0.06)' },
   tool_call:  { icon: '🔧', color: '#60a5fa', label: '调用',  bg: 'rgba(96,165,250,0.06)' },
   tool_result:{ icon: '📊', color: '#4ade80', label: '结果',  bg: 'rgba(74,222,128,0.06)' },
@@ -51,7 +51,7 @@ watch(() => props.conversations.length, () => {
     <!-- 顶栏 -->
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-shrink:0;">
       <h1 style="font-size:1.3rem;font-weight:700;margin:0;">AI Agent</h1>
-      <div style="display:flex;gap:14px;font-size:11px;color:#71717a;">
+      <div style="display:flex;gap:14px;font-size:11px;color:var(--text-secondary);">
         <span>💬 {{ conversations.length }}</span>
         <span>🧠 {{ memoryStats.conversations }}</span>
         <span>📋 {{ memoryStats.decisions }}</span>
@@ -61,13 +61,13 @@ watch(() => props.conversations.length, () => {
     <!-- 快捷指令 -->
     <div style="display:flex;gap:6px;margin-bottom:10px;flex-shrink:0;flex-wrap:wrap;">
       <button v-for="a in quickActions" :key="a.label" @click="doSend(a.query)" :disabled="loading"
-        style="padding:5px 12px;background:#18181b;border:1px solid #27272a;border-radius:16px;color:#a1a1aa;font-size:12px;cursor:pointer;"
+        style="padding:5px 12px;background:var(--bg-input);border:1px solid var(--border);border-radius:16px;color:var(--text-secondary);font-size:12px;cursor:pointer;"
       >{{ a.label }}</button>
     </div>
 
     <!-- 对话区 -->
-    <div ref="logEl" style="flex:1;overflow-y:auto;background:#09090b;border:1px solid #1f1f23;border-radius:12px;padding:16px;min-height:0;">
-      <div v-if="conversations.length === 0 && !loading" style="color:#3f3f46;text-align:center;padding:60px 20px;">
+    <div ref="logEl" style="flex:1;overflow-y:auto;background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:16px;min-height:0;">
+      <div v-if="conversations.length === 0 && !loading" style="color:var(--border);text-align:center;padding:60px 20px;">
         <div style="font-size:40px;margin-bottom:12px;">🤖</div>
         <div style="font-size:14px;margin-bottom:4px;">自然语言管理 GPU</div>
         <div style="font-size:12px;">试试上方快捷指令，或输入 "检查GPU利用率"</div>
@@ -85,14 +85,14 @@ watch(() => props.conversations.length, () => {
             <span v-if="step.toolName" style="font-size:10px;color:#60a5fa;background:rgba(96,165,250,0.1);padding:0px 5px;border-radius:3px;">
               {{ step.toolName }}
             </span>
-            <span style="font-size:10px;color:#3f3f46;margin-left:auto;">{{ step.timestamp }}</span>
+            <span style="font-size:10px;color:var(--border);margin-left:auto;">{{ step.timestamp }}</span>
           </div>
-          <div v-if="step.content" style="font-size:13px;color:#d4d4d8;white-space:pre-wrap;line-height:1.55;">{{ step.content }}</div>
+          <div v-if="step.content" style="font-size:13px;color:var(--text);white-space:pre-wrap;line-height:1.55;">{{ step.content }}</div>
         </div>
-        <div style="border-top:1px solid #1f1f23;margin:12px 0;"></div>
+        <div style="border-top:1px solid var(--border);margin:12px 0;"></div>
       </template>
 
-      <div v-if="loading" style="display:flex;align-items:center;gap:8px;padding:8px 12px;color:#71717a;font-size:12px;">
+      <div v-if="loading" style="display:flex;align-items:center;gap:8px;padding:8px 12px;color:var(--text-secondary);font-size:12px;">
         <span style="display:inline-block;width:8px;height:8px;background:#a78bfa;border-radius:50%;animation:pulse 1s infinite;"></span>
         正在调用 LLM + 工具...
       </div>
@@ -106,7 +106,7 @@ watch(() => props.conversations.length, () => {
         @keyup.enter="doSend()"
         :disabled="loading"
         placeholder="输入自然语言，例如: 检查GPU利用率..."
-        style="flex:1;padding:10px 14px;background:#18181b;border:1px solid #27272a;border-radius:10px;color:#e4e4e7;font-size:14px;outline:none;"
+        style="flex:1;padding:10px 14px;background:var(--bg-input);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:14px;outline:none;"
       />
       <button @click="doSend()" :disabled="loading || !query.trim()"
         style="padding:10px 24px;background:linear-gradient(135deg,#2563eb,#7c3aed);border:none;border-radius:10px;color:#fff;font-size:14px;cursor:pointer;font-weight:600;white-space:nowrap;"

@@ -17,6 +17,7 @@ import LogTerminal from './components/LogTerminal.vue'
 import SettingsPanel from './components/SettingsPanel.vue'
 import RegisterDialog from './components/RegisterDialog.vue'
 import AgentLog from './components/AgentLog.vue'
+import TopBar from './components/TopBar.vue'
 
 // ── Agent 类型 ──
 
@@ -30,13 +31,21 @@ interface AgentConversation {
 // ── State ──
 
 const tabs: Tab[] = [
-  { id: 'dashboard', label: '仪表盘', icon: '📊' },
-  { id: 'instances', label: '实例列表', icon: '🖥' },
-  { id: 'agent', label: 'AI Agent', icon: '🤖' },
-  { id: 'cost', label: '费用分析', icon: '💰' },
-  { id: 'logs', label: '日志终端', icon: '📋' },
-  { id: 'settings', label: '设置', icon: '⚙' },
+  { id: 'dashboard', label: '仪表盘', icon: '' },
+  { id: 'instances', label: '实例列表', icon: '' },
+  { id: 'agent', label: 'AI Agent', icon: '' },
+  { id: 'cost', label: '费用分析', icon: '' },
+  { id: 'logs', label: '日志终端', icon: '' },
+  { id: 'settings', label: '设置', icon: '' },
 ]
+
+function handleSelectInstance(uuid: string) {
+  doSetCurrent(uuid)
+}
+
+function handleNavTo(tab: string) {
+  currentTab.value = tab
+}
 
 const currentTab = ref<string>('dashboard')
 const instances = ref<Instance[]>([])
@@ -285,22 +294,32 @@ onUnmounted(() => {
 <template>
   <Toast :show="toast.show" :msg="toast.msg" :ok="toast.ok" :id="toast.id" @dismiss="toast.show = false" />
 
-  <div style="display:flex;height:100vh;">
-    <Sidebar
-      :tabs="tabs"
-      :currentTab="currentTab"
-      :balanceDisplay="balanceDisplay"
+  <div style="display:flex;flex-direction:column;height:100vh;">
+    <!-- 顶部栏 -->
+    <TopBar
+      :currentInstance="currentInstance"
+      :instances="instances"
       :stats="stats"
-      :loading="loading.init"
-      @selectTab="currentTab = $event"
+      @selectInstance="handleSelectInstance"
+      @navTo="handleNavTo"
     />
 
-    <!-- MAIN -->
-    <div style="flex:1;overflow-y:auto;padding:24px;">
-      <Loading v-if="loading.init" :serverOnline="serverOnline" />
+    <div style="display:flex;flex:1;min-height:0;">
+      <Sidebar
+        :tabs="tabs"
+        :currentTab="currentTab"
+        :balanceDisplay="balanceDisplay"
+        :stats="stats"
+        :loading="loading.init"
+        @selectTab="currentTab = $event"
+      />
 
-      <template v-else>
-        <KeepAlive>
+      <!-- MAIN -->
+      <div style="flex:1;overflow-y:auto;padding:24px;">
+        <Loading v-if="loading.init" :serverOnline="serverOnline" />
+
+        <template v-else>
+          <KeepAlive>
           <Dashboard
             v-if="currentTab === 'dashboard'"
             :currentInstance="currentInstance"
@@ -355,6 +374,7 @@ onUnmounted(() => {
         </KeepAlive>
       </template>
     </div>
+  </div>
   </div>
 
   <RegisterDialog ref="registerDialog" @registered="refreshInstances()" />
