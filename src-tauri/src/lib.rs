@@ -88,34 +88,68 @@ fn start_status_poller(app: AppHandle) {
         // give the Python sidecar time to start
         thread::sleep(Duration::from_secs(4));
 
+        let mut server_failures: u32 = 0;
+        let max_failures: u32 = 3;
+
         loop {
             thread::sleep(Duration::from_secs(10));
 
             // call Python API to check status
-            let color = match ureq::get("http://127.0.0.1:8899/api/stats")
+            let (color, server_ok) = match ureq::get("http://127.0.0.1:8899/api/stats")
                 .call()
                 .ok()
                 .and_then(|r| r.into_json::<serde_json::Value>().ok())
             {
                 Some(stats) => {
+                    server_failures = 0;
                     let running = stats["running"].as_u64().unwrap_or(0);
                     let total = stats["total"].as_u64().unwrap_or(0);
                     if running > 0 {
-                        "green"
+                        ("green", true)
                     } else if total > 0 {
-                        "gray"
+                        ("yellow", true)
                     } else {
-                        "gray"
+                        ("gray", true)
                     }
                 }
-                None => "gray",
+                None => {
+                    server_failures += 1;
+                    ("gray", false)
+                }
             };
+
+            // auto-restart sidecar if server is down for too long
+            if !server_ok && server_failures >= max_failures {
+                eprintln!("[tauri] Python sidecar unresponsive ({} failures), attempting restart...", server_failures);
+                // kill any lingering sidecar process and respawn
+                let state = app.state::<SidecarProcess>();
+                if let Ok(mut guard) = state.0.lock() {
+                    if let Some(ref mut child) = *guard {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                    }
+                    *guard = spawn_python_backend();
+                    if guard.is_some() {
+                        eprintln!("[tauri] Python sidecar restarted");
+                    }
+                }
+                server_failures = 0;
+                // give the new process time to start
+                thread::sleep(Duration::from_secs(5));
+            }
 
             // update tray icon
             if let Some(tray) = app.tray_by_id("main-tray") {
                 if let Ok(icon) = tauri::image::Image::from_bytes(tray_icon_bytes(color)) {
                     let _ = tray.set_icon(Some(icon));
                 }
+                // update tooltip with server status
+                let tooltip = if server_ok {
+                    "AutoDL Manager"
+                } else {
+                    "AutoDL Manager — 后端离线"
+                };
+                let _ = tray.set_tooltip(Some(tooltip));
             }
         }
     });

@@ -111,6 +111,7 @@ class InstanceRegistry:
             "ssh_port": port,
             "ssh_user": username,
             "ssh_key_path": key_filename,
+            "ssh_password": password,
             "gpu_type": gpu_type,
             "price_per_hour": 0.0,
             "status": "unknown",

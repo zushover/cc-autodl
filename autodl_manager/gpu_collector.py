@@ -4,15 +4,16 @@ import paramiko
 
 
 class GPUCollector:
-    def __init__(self, ssh_key_path: str, ssh_user: str = "root"):
+    def __init__(self, ssh_key_path: str = "", ssh_user: str = "root", ssh_password: str = ""):
         self.ssh_key_path = ssh_key_path
         self.ssh_user = ssh_user
+        self.ssh_password = ssh_password
         self._client: paramiko.SSHClient | None = None
         self._host: str = ""
         self._port: int = 22
         self._failures: int = 0
 
-    def connect(self, host: str, port: int = 22):
+    def connect(self, host: str, port: int = 22, key_filename: str = "", password: str = ""):
         if self._client and host == self._host and port == self._port:
             return
         self.disconnect()
@@ -20,14 +21,24 @@ class GPUCollector:
         self._port = port
         self._client = paramiko.SSHClient()
         self._client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        self._client.connect(
-            hostname=host,
-            port=port,
-            username=self.ssh_user,
-            key_filename=self.ssh_key_path,
-            timeout=10,
-            banner_timeout=10,
-        )
+
+        # 认证优先级：参数传入 > 实例属性，密钥优先于密码
+        key = key_filename or self.ssh_key_path
+        pwd = password or self.ssh_password
+
+        connect_kwargs = {
+            "hostname": host,
+            "port": port,
+            "username": self.ssh_user,
+            "timeout": 10,
+            "banner_timeout": 10,
+        }
+        if key:
+            connect_kwargs["key_filename"] = key
+        elif pwd:
+            connect_kwargs["password"] = pwd
+
+        self._client.connect(**connect_kwargs)
 
     def disconnect(self):
         if self._client:

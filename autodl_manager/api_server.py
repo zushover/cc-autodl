@@ -22,6 +22,7 @@ from .db import get_db
 from .instance_registry import InstanceRegistry
 from .gpu_collector import GPUCollector
 from .gpu_data import GPU_TYPES, PRO_GPU_TYPES, REGIONS, find_gpu
+from .daemon import DaemonV2, set_broadcaster
 
 # ─── SSE 订阅者管理 ───
 _sse_subscribers: list[queue.Queue] = []
@@ -318,7 +319,7 @@ def create_app() -> FastAPI:
 
     @app.get("/api/instances/{uuid}/gpu")
     async def get_instance_gpu(uuid: str):
-        """主动采集一次 GPU 数据。"""
+        """主动采集一次 GPU 数据。使用实例级别的 SSH 凭据。"""
         reg = _get_registry()
         inst = reg.get(uuid)
         if not inst:
@@ -327,7 +328,13 @@ def create_app() -> FastAPI:
         port = inst.get("ssh_port", 22)
         if not host:
             return JSONResponse({"error": "SSH host 未配置"}, 400)
-        collector = _get_collector()
+
+        # 使用实例级别的 SSH 凭据（密钥或密码）
+        collector = GPUCollector(
+            ssh_key_path=inst.get("ssh_key_path", ""),
+            ssh_user=inst.get("ssh_user", "root"),
+            ssh_password=inst.get("ssh_password", ""),
+        )
         result = collector.collect(host, port)
         if result:
             reg.db.insert_gpu_snapshot(uuid, result)
@@ -626,5 +633,24 @@ def create_app() -> FastAPI:
                 results.append({"uuid": uuid, "ok": False, "error": str(e)})
         _sse_broadcast("shutdown_all", {"results": results})
         return {"results": results}
+
+    # ─── 后台守护进程 ───
+
+    _daemon: DaemonV2 | None = None
+
+    @app.on_event("startup")
+    async def start_daemon():
+        nonlocal _daemon
+        # 注入 SSE 广播
+        set_broadcaster(_sse_broadcast)
+        # 创建并启动守护进程
+        api = _get_api() if _has_token() else None
+        _daemon = DaemonV2(registry=_get_registry(), db=get_db(), api=api)
+        asyncio.create_task(_daemon.run())
+
+    @app.on_event("shutdown")
+    async def stop_daemon():
+        if _daemon:
+            _daemon.stop()
 
     return app

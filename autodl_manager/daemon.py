@@ -1,84 +1,120 @@
-import os
-import sys
+"""后台守护进程 — GPU 监控 + 日志检查 + 空闲检测 + 余额告警。
+
+v2.1: 重写为使用 InstanceRegistry (SQLite) + GPUCollector (支持密钥/密码)。
+      作为 FastAPI lifespan 事件运行，通过 SSE 广播实时数据。
+"""
+
+import asyncio
+import logging
 import time
-import signal
-import atexit
 from datetime import datetime, timezone
-from pathlib import Path
+from typing import Optional
 
-import yaml
-
-from .autodl_api import AutoDLAPI
-from .state_manager import StateManager
-from .fleet_manager import FleetManager
+from .autodl_api import AutoDLAPI, AutoDLAPIError
+from .db import Database
 from .gpu_collector import GPUCollector
-from .session_manager import SessionManager
-from .cost_tracker import CostTracker
+from .instance_registry import InstanceRegistry
+from .log_parser import parse_training_log, check_anomaly
+
+logger = logging.getLogger("autodl.daemon")
+
+# ─── SSE 广播回调（由 api_server 注入）───
+
+_sse_broadcast = None
 
 
-PID_FILE = "data/daemon.pid"
+def set_broadcaster(fn):
+    """注入 SSE 广播函数。api_server 在创建 app 时调用。"""
+    global _sse_broadcast
+    _sse_broadcast = fn
 
 
-class Daemon:
+def _broadcast(event: str, data: dict):
+    if _sse_broadcast:
+        try:
+            _sse_broadcast(event, data)
+        except Exception:
+            pass
+
+
+# ─── 守护进程 ───
+
+
+class DaemonV2:
+    """后台监控守护进程。"""
+
     def __init__(
         self,
-        api: AutoDLAPI,
-        fleet: FleetManager,
-        state: StateManager,
-        collector: GPUCollector,
-        session_mgr: SessionManager,
-        cost: CostTracker,
+        registry: InstanceRegistry,
+        db: Database,
+        api: Optional[AutoDLAPI] = None,
     ):
+        self.reg = registry
+        self.db = db
         self.api = api
-        self.fleet = fleet
-        self.state = state
-        self.collector = collector
-        self.session = session_mgr
-        self.cost = cost
         self.running = True
+
+        # 定时器
         self._last_gpu_collect = 0.0
         self._last_log_check = 0.0
         self._last_cost_update = 0.0
         self._last_balance_check = 0.0
+
+        # 空闲检测状态
         self._idle_start: float | None = None
         self._idle_state = "NORMAL"
 
-    def _pid_path(self) -> Path:
-        return Path(__file__).parent / PID_FILE
+        # 配置
+        self.gpu_interval = 120       # GPU 采集间隔（秒）
+        self.log_interval = 300       # 日志检查间隔（秒）
+        self.cost_interval = 600      # 费用记录间隔（秒）
+        self.balance_interval = 1800  # 余额检查间隔（秒）
+        self.idle_warn_sec = 900      # 空闲告警阈值（15分钟）
+        self.idle_critical_sec = 1800 # 空闲严重告警（30分钟）
+        self.low_balance_yuan = 50    # 余额告警阈值
 
-    def _write_pid(self):
-        self._pid_path().write_text(str(os.getpid()))
+    # ─── GPU 采集 ───
 
-    def _remove_pid(self):
-        path = self._pid_path()
-        if path.exists():
-            path.unlink()
+    async def _collect_gpu(self, inst: dict):
+        """采集当前实例的 GPU 数据。"""
+        host = inst.get("ssh_host", "")
+        port = inst.get("ssh_port", 22)
+        uuid = inst["uuid"]
 
-    def _get_current_instance(self) -> dict | None:
-        data = self.state.read()
-        uuid = data.get("current_instance_uuid")
-        if not uuid:
+        if not host:
             return None
-        return (data.get("instances") or {}).get(uuid)
 
-    def _collect_gpu(self, instance: dict):
-        host = instance.get("ssh_host", "")
-        port = instance.get("ssh_port", 22)
-        uuid = instance["instance_uuid"]
-        gpu = self.collector.collect(host, port)
+        collector = GPUCollector(
+            ssh_key_path=inst.get("ssh_key_path", ""),
+            ssh_user=inst.get("ssh_user", "root"),
+            ssh_password=inst.get("ssh_password", ""),
+        )
+        try:
+            gpu = await asyncio.to_thread(collector.collect, host, port)
+        except Exception as e:
+            logger.warning(f"GPU 采集失败 [{uuid[:12]}]: {e}")
+            return None
+
         if gpu:
-            self.state.update_gpu_snapshot(uuid, gpu)
-        self._last_gpu_collect = time.time()
+            self.db.insert_gpu_snapshot(uuid, gpu)
+            gpu["uuid"] = uuid
+            _broadcast("gpu", gpu)
+        return gpu
 
-    def _check_idle(self, gpu_util: int):
+    # ─── 空闲检测 ───
+
+    def _check_idle(self, inst_uuid: str, gpu_util: int | None):
+        """检测 GPU 空闲并生成告警。"""
         now = time.time()
-        if gpu_util < 5:
+        util = gpu_util or 0
+
+        if util < 5:
             if self._idle_start is None:
                 self._idle_start = now
             idle_sec = now - self._idle_start
-            if idle_sec > 1800:
+            if idle_sec > self.idle_critical_sec:
                 new_state = "CRITICAL"
-            elif idle_sec > 900:
+            elif idle_sec > self.idle_warn_sec:
                 new_state = "WARNING"
             else:
                 new_state = self._idle_state
@@ -88,153 +124,150 @@ class Daemon:
 
         if new_state != self._idle_state:
             self._idle_state = new_state
-            severity = {"NORMAL": "info", "WARNING": "warning", "CRITICAL": "critical"}
-            messages = {
-                "WARNING": f"GPU 空闲 {int((now - self._idle_start) / 60)} 分钟 (利用率 < 5%)",
-                "CRITICAL": f"GPU 空闲 {int((now - self._idle_start) / 60)} 分钟，建议关机",
-            }
             if new_state != "NORMAL":
-                self.state.add_alert({
-                    "severity": severity[new_state],
+                idle_min = int((now - (self._idle_start or now)) / 60)
+                msg = f"GPU 空闲 {idle_min} 分钟 (利用率 < 5%)"
+                if new_state == "CRITICAL":
+                    msg += "，建议关机"
+
+                alert = {
+                    "id": f"alert-{int(now*1000)}",
+                    "instance_uuid": inst_uuid,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "severity": "warning" if new_state == "WARNING" else "critical",
                     "type": "idle",
-                    "message": messages[new_state],
-                    "created_at": datetime.now(timezone.utc).isoformat(),
-                })
-                print(f"[DAEMON] {messages[new_state]}")
+                    "message": msg,
+                    "dismissed": 0,
+                }
+                self.db.add_alert(alert)
+                _broadcast("alert", alert)
+                logger.warning(f"[DAEMON] {msg}")
 
-        elif self._idle_start is not None and self._idle_state in ("WARNING", "CRITICAL"):
-            idle_min = int((now - self._idle_start) / 60)
-            if idle_min % 10 == 0:
-                print(f"[DAEMON] GPU 持续空闲 {idle_min} 分钟")
+    # ─── 日志检查 ───
 
-    def _check_log(self, instance: dict):
-        host = instance.get("ssh_host", "")
-        port = instance.get("ssh_port", 22)
+    async def _check_log(self, inst: dict):
+        """SSH 拉取训练日志，检查异常。"""
+        uuid = inst["uuid"]
+        host = inst.get("ssh_host", "")
+        port = inst.get("ssh_port", 22)
+
+        if not host:
+            return
+
+        collector = GPUCollector(
+            ssh_key_path=inst.get("ssh_key_path", ""),
+            ssh_user=inst.get("ssh_user", "root"),
+            ssh_password=inst.get("ssh_password", ""),
+        )
         try:
-            self.collector.connect(host, port)
-            stdin, stdout, stderr = self.collector._client.exec_command(
-                "cat /root/autodl-tmp/*/results/run.log 2>/dev/null | tail -100 || echo ''",
+            collector.connect(host, port)
+            stdin, stdout, stderr = await asyncio.to_thread(
+                collector._client.exec_command,
+                "cat /root/autodl-tmp/*/run.log 2>/dev/null | tail -100 || echo ''",
                 timeout=15,
             )
             snippet = stdout.read().decode(errors="replace")
-            if snippet.strip():
-                progress = self.session.parse_training_log(snippet)
-                if progress:
-                    self.state.update_progress(instance["instance_uuid"], progress)
-                anomalies = self.session.check_anomaly(snippet)
-                for a in anomalies:
-                    self.state.add_alert(a)
-                    print(f"[DAEMON] {a['severity'].upper()}: {a['message']}")
-        except Exception:
-            pass
-        self._last_log_check = time.time()
+            collector.disconnect()
 
-    def _update_cost(self, instance: dict):
-        price = instance.get("payg_price", 0) or 0
-        self.cost.record_snapshot(
-            instance["instance_uuid"],
-            instance.get("instance_name", ""),
-            price,
-        )
-        self._last_cost_update = time.time()
+            if not snippet.strip():
+                return
 
-    def _check_balance_and_expiry(self):
+            # 解析训练指标
+            progress = parse_training_log(snippet)
+            if progress:
+                _broadcast("training", {"uuid": uuid, **progress})
+
+            # 异常检测
+            anomalies = check_anomaly(snippet)
+            for a in anomalies:
+                alert = {
+                    "id": f"alert-{int(time.time()*1000)}",
+                    "instance_uuid": uuid,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "severity": a["severity"],
+                    "type": a["type"],
+                    "message": a["message"],
+                    "dismissed": 0,
+                }
+                self.db.add_alert(alert)
+                _broadcast("alert", alert)
+                logger.warning(f"[DAEMON] {a['severity'].upper()}: {a['message']}")
+        except Exception as e:
+            logger.debug(f"日志检查失败 [{uuid[:12]}]: {e}")
+
+    # ─── 余额检查 ───
+
+    async def _check_balance(self):
+        """检查余额并生成告警。"""
+        if not self.api:
+            return
         try:
-            bal = self.api.get_balance()
-            self.state.write({"balance": {"assets_yuan": bal["assets_yuan"], "updated_at": datetime.now(timezone.utc).isoformat()}})
-            if bal["assets_yuan"] < 50:
-                self.state.add_alert({
+            bal = await asyncio.to_thread(self.api.get_balance)
+            assets = bal.get("assets_yuan", 0)
+            _broadcast("balance", {
+                "assets_yuan": assets,
+                "voucher_balance": bal.get("voucher_balance", 0),
+                "accumulate_yuan": bal.get("accumulate_yuan", 0),
+            })
+            if assets < self.low_balance_yuan:
+                alert = {
+                    "id": f"alert-{int(time.time()*1000)}",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
                     "severity": "critical",
                     "type": "low_balance",
-                    "message": f"余额不足 ¥{bal['assets_yuan']:.2f}",
-                })
-                print(f"[DAEMON] 余额告警: ¥{bal['assets_yuan']:.2f}")
-        except Exception:
-            pass
-        self._last_balance_check = time.time()
+                    "message": f"余额不足 ¥{assets:.2f}",
+                    "dismissed": 0,
+                }
+                self.db.add_alert(alert)
+                _broadcast("alert", alert)
+                logger.warning(f"[DAEMON] 余额告警: ¥{assets:.2f}")
+        except AutoDLAPIError as e:
+            logger.warning(f"余额查询失败: {e}")
+        except Exception as e:
+            logger.debug(f"余额检查异常: {e}")
 
-    def run(self):
-        if self._pid_path().exists():
-            try:
-                old_pid = int(self._pid_path().read_text())
-                os.kill(old_pid, 0)
-                print(f"守护进程已在运行 (PID {old_pid})")
-                return
-            except (OSError, ValueError):
-                pass
+    # ─── 主循环 ───
 
-        self._write_pid()
-        atexit.register(self._remove_pid)
-
-        def handle_signal(sig, frame):
-            self.running = False
-        signal.signal(signal.SIGINT, handle_signal)
-        signal.signal(signal.SIGTERM, handle_signal)
-
-        print(f"[DAEMON] 启动 (PID {os.getpid()})")
+    async def run(self):
+        """主循环。作为 asyncio Task 运行。"""
+        logger.info("[DAEMON] 启动")
 
         while self.running:
             try:
-                instance = self._get_current_instance()
-                if not instance or instance.get("status") != "running":
-                    time.sleep(30)
+                current = self.reg.get_current()
+                if not current:
+                    await asyncio.sleep(10)
+                    continue
+                if current.get("status") not in ("running", "reachable", "no_gpu"):
+                    await asyncio.sleep(10)
                     continue
 
                 now = time.time()
-                host = instance.get("ssh_host", "")
-                port = instance.get("ssh_port", 22)
-                gpu = None
+                host = current.get("ssh_host", "")
 
-                if now - self._last_gpu_collect >= 120 and host:
-                    self._collect_gpu(instance)
-                    gpu_data = self.state.read().get("gpu") or {}
-                    gpu_util = gpu_data.get("util_percent", 0)
-                    self._check_idle(gpu_util)
+                # GPU 采集
+                if now - self._last_gpu_collect >= self.gpu_interval and host:
+                    gpu = await self._collect_gpu(current)
+                    self._last_gpu_collect = now
+                    if gpu:
+                        self._check_idle(current["uuid"], gpu.get("util_percent"))
 
-                if now - self._last_log_check >= 300 and host:
-                    self._check_log(instance)
+                # 日志检查
+                if now - self._last_log_check >= self.log_interval and host:
+                    await self._check_log(current)
+                    self._last_log_check = now
 
-                if now - self._last_cost_update >= 600:
-                    self._update_cost(instance)
-
-                if now - self._last_balance_check >= 1800:
-                    self._check_balance_and_expiry()
+                # 余额检查
+                if now - self._last_balance_check >= self.balance_interval:
+                    await self._check_balance()
+                    self._last_balance_check = now
 
             except Exception as e:
-                print(f"[DAEMON] 错误: {e}")
+                logger.error(f"[DAEMON] 错误: {e}")
 
-            time.sleep(10)
+            await asyncio.sleep(10)
 
-        print("[DAEMON] 已停止")
+        logger.info("[DAEMON] 已停止")
 
-
-def main():
-    root = Path(__file__).parent.parent
-    config_path = root / "config.yaml"
-    if not config_path.exists():
-        print("config.yaml 不存在")
-        sys.exit(1)
-
-    with open(config_path, "r", encoding="utf-8") as f:
-        config = yaml.safe_load(f)
-
-    token = config.get("auto_dl", {}).get("token", "")
-    if not token or token == "your-token-here":
-        print("请在 config.yaml 中填入 AutoDL Token")
-        sys.exit(1)
-
-    api = AutoDLAPI(token)
-    state = StateManager()
-    ssh_key = config.get("ssh", {}).get("key_path", "")
-    ssh_user = config.get("ssh", {}).get("user", "root")
-    fleet = FleetManager(api, state, ssh_key, ssh_user)
-    collector = GPUCollector(ssh_key, ssh_user)
-    session_mgr = SessionManager(state)
-    cost = CostTracker(state)
-
-    daemon = Daemon(api, fleet, state, collector, session_mgr, cost)
-    daemon.run()
-
-
-if __name__ == "__main__":
-    main()
+    def stop(self):
+        self.running = False
