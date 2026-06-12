@@ -626,6 +626,68 @@ def create_app() -> FastAPI:
         except Exception as e:
             return JSONResponse({"error": f"Agent 执行失败: {e}"}, 500)
 
+    @app.post("/api/agent/orchestrate")
+    async def agent_orchestrate(request: Request):
+        """多 Agent 编排：任务规划 → 分发 → 执行 → 汇总。
+
+        POST body: {"query": "检查所有GPU实例，空闲的关机"}
+        """
+        body = await request.json()
+        query = body.get("query", "").strip()
+        if not query:
+            return JSONResponse({"error": "query 必填"}, 400)
+
+        config = _load_config()
+        llm_config = config.get("llm", {})
+        api_key = llm_config.get("api_key", "")
+        api_base = llm_config.get("api_base", "https://api.deepseek.com/v1")
+        model = llm_config.get("model", "deepseek-v4-pro")
+
+        if not api_key:
+            return JSONResponse(
+                {"error": "LLM API Key 未配置"},
+                400,
+            )
+
+        try:
+            from .agent.multi_agent import MultiAgentOrchestrator
+            from .agent.memory import AgentMemory
+
+            orchestrator = MultiAgentOrchestrator(memory=AgentMemory())
+            result = orchestrator.execute(
+                query,
+                llm_api_key=api_key,
+                llm_api_base=api_base,
+                llm_model=model,
+            )
+            _sse_broadcast("orchestrate_result", {
+                "query": query,
+                "summary": result["summary"],
+                "task_count": result["tasks_planned"],
+            })
+            return result
+        except Exception as e:
+            return JSONResponse({"error": f"编排执行失败: {e}"}, 500)
+
+    @app.get("/api/agent/status")
+    async def agent_status():
+        """获取 Agent 系统整体状态。"""
+        try:
+            from .agent.memory import AgentMemory
+            mem = AgentMemory()
+            return {
+                "memory": {
+                    "conversations": mem.conversations.count(),
+                    "experiments": mem.experiments.count(),
+                    "decisions": mem.decisions.count(),
+                },
+                "tools": len(["list_gpu_instances", "check_gpu_utilization",
+                              "shutdown_idle_instance", "get_balance_and_cost",
+                              "probe_instance_health"]),
+            }
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, 500)
+
     # ─── SSE 实时流 ───
 
     @app.get("/api/stream")
