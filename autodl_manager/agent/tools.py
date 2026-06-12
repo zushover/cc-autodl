@@ -267,6 +267,86 @@ def probe_instance_health(uuid: str) -> str:
         }, ensure_ascii=False, indent=2)
 
 
+@tool
+def execute_on_server(uuid: str, command: str) -> str:
+    """在指定实例上通过 SSH 远程执行命令，返回 stdout。
+
+    适合用户说"在服务器上运行某个命令"时调用。
+    例如：跑 Python 脚本、查看文件、安装包、git clone 等。
+
+    Args:
+        uuid: 实例 UUID
+        command: 要执行的 bash 命令。多命令用 && 连接。
+
+    Returns:
+        命令的 stdout 输出（截取前 3000 字符）。
+    """
+    reg = _get_registry()
+    inst = reg.get(uuid)
+    if not inst:
+        all_inst = reg.list_all()
+        matches = [i for i in all_inst if i["uuid"].startswith(uuid)]
+        if len(matches) == 1:
+            inst = matches[0]
+        else:
+            return f"实例 {uuid} 不存在"
+
+    host = inst.get("ssh_host", "")
+    if not host:
+        return f"实例 {inst.get('alias', uuid[:12])} 未配置 SSH"
+
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    try:
+        kwargs = {"hostname": host, "port": inst.get("ssh_port", 22),
+                  "username": inst.get("ssh_user", "root"), "timeout": 15}
+        if inst.get("ssh_key_path"):
+            kwargs["key_filename"] = inst["ssh_key_path"]
+        elif inst.get("ssh_password"):
+            kwargs["password"] = inst["ssh_password"]
+        else:
+            return "未配置 SSH 凭据"
+
+        client.connect(**kwargs)
+        stdin, stdout, stderr = client.exec_command(command, timeout=30)
+        out = stdout.read().decode(errors="replace").strip()
+        err = stderr.read().decode(errors="replace").strip()
+        code = stdout.channel.recv_exit_status()
+        client.close()
+
+        result = out or "(no output)"
+        if err and code != 0:
+            result += f"\n[stderr]: {err[:500]}"
+        return result[:3000]
+    except Exception as e:
+        return f"执行失败: {e}"
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
+@tool
+def delegate_to_server(uuid: str, task: str) -> str:
+    """把自然语言任务委派给服务器上的 Claude Code 执行。
+
+    前提：服务器已通过 ☀️ 部署了 Claude Code。
+    此 Tool 会 SSH 到服务器，调 claude -p 执行任务并返回结果。
+
+    适合用户说"帮我在服务器上写一个训练脚本"、"分析服务器上的日志"等
+    需要 AI 推理的任务（不是简单命令）。
+
+    Args:
+        uuid: 实例 UUID
+        task: 自然语言任务描述，会传给服务器的 Claude Code
+
+    Returns:
+        服务器 CC 返回的结果（截取前 3000 字符）。
+    """
+    return execute_on_server(uuid, f"source ~/.claude/env.sh 2>/dev/null; claude -p {repr(task)}")
+
+
 # ─── 工具注册表 ───
 
 ALL_TOOLS = [
@@ -275,4 +355,6 @@ ALL_TOOLS = [
     shutdown_idle_instance,
     get_balance_and_cost,
     probe_instance_health,
+    execute_on_server,
+    delegate_to_server,
 ]

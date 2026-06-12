@@ -37,7 +37,7 @@ class AgentState(TypedDict):
 def create_agent_loop(
     api_key: str = "",
     api_base: str = "https://api.deepseek.com/v1",
-    model: str = "deepseek-chat",
+    model: str = "deepseek-v4-flash",
     temperature: float = 0.1,
 ):
     """创建 Agent 决策循环。

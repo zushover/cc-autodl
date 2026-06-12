@@ -685,7 +685,7 @@ def create_app() -> FastAPI:
         llm_config = config.get("llm", {})
         api_key = llm_config.get("api_key", "")
         api_base = llm_config.get("api_base", "https://api.deepseek.com/v1")
-        model = llm_config.get("model", "deepseek-chat")
+        model = llm_config.get("model", "deepseek-v4-flash")
 
         if not api_key:
             return JSONResponse(
@@ -721,7 +721,7 @@ def create_app() -> FastAPI:
         llm_config = config.get("llm", {})
         api_key = llm_config.get("api_key", "")
         api_base = llm_config.get("api_base", "https://api.deepseek.com/v1")
-        model = llm_config.get("model", "deepseek-v4-pro")
+        model = llm_config.get("model", "deepseek-v4-flash")
 
         if not api_key:
             return JSONResponse({"error": "LLM API Key 未配置"}, 400)
@@ -902,7 +902,7 @@ def create_app() -> FastAPI:
         llm_config = config.get("llm", {})
         api_key = llm_config.get("api_key", "")
         api_base = llm_config.get("api_base", "https://api.deepseek.com/v1")
-        model = llm_config.get("model", "deepseek-v4-pro")
+        model = llm_config.get("model", "deepseek-v4-flash")
 
         if not api_key:
             return JSONResponse(
