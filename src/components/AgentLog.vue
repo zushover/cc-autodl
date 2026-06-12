@@ -175,39 +175,43 @@ const rings = [
 /* GPU 加速 */
 .orbit { will-change: transform; backface-visibility: hidden; }
 
-/* 基础旋转 — 1秒丝滑旋转 */
-.ring-0 { animation: orb4 4s linear infinite; }
-.ring-1 { animation: orb3 3s linear infinite; }
-.ring-2 { animation: orb2 2s linear infinite; }
-.ring-3 { animation: orb1 1.5s linear infinite; }
+/* 基础旋转 */
+.ring-0 { animation: orb2 2s linear infinite; }
+.ring-1 { animation: orb1-5 1.5s linear infinite; }
+.ring-2 { animation: orb1 1s linear infinite; }
+.ring-3 { animation: orb0-7 0.7s linear infinite; }
 
-@keyframes orb4 { to { transform: rotate(360deg); } }
-@keyframes orb3 { to { transform: rotate(360deg); } }
 @keyframes orb2 { to { transform: rotate(360deg); } }
+@keyframes orb1-5 { to { transform: rotate(360deg); } }
 @keyframes orb1 { to { transform: rotate(360deg); } }
+@keyframes orb0-7 { to { transform: rotate(360deg); } }
 
-/* 汇聚 — 1s后开始 */
-.active .ring-0 { animation: orb4 4s linear infinite, shrinkR 0.5s ease-in 1.0s forwards; }
-.active .ring-1 { animation: orb3 3s linear infinite, shrinkR 0.4s ease-in 1.1s forwards; }
-.active .ring-2 { animation: orb2 2s linear infinite, shrinkR 0.3s ease-in 1.2s forwards; }
-.active .ring-3 { animation: orb1 1.5s linear infinite, shrinkR 0.25s ease-in 1.3s forwards; }
-@keyframes shrinkR { to { transform: scale(0); opacity: 0; } }
+/* 汇聚 — 0.4s后环的宽高收缩到0，点自然飞向中心 */
+.active .ring-0 { animation: orb2 2s linear infinite, converge0 0.5s ease-in 0.4s forwards; }
+.active .ring-1 { animation: orb1-5 1.5s linear infinite, converge1 0.45s ease-in 0.45s forwards; }
+.active .ring-2 { animation: orb1 1s linear infinite, converge2 0.4s ease-in 0.5s forwards; }
+.active .ring-3 { animation: orb0-7 0.7s linear infinite, converge3 0.35s ease-in 0.55s forwards; }
 
-/* logo 弹入 — 1.4s */
+@keyframes converge0 { to { width:0; height:0; margin-left:0; margin-top:0; opacity:0; } }
+@keyframes converge1 { to { width:0; height:0; margin-left:0; margin-top:0; opacity:0; } }
+@keyframes converge2 { to { width:0; height:0; margin-left:0; margin-top:0; opacity:0; } }
+@keyframes converge3 { to { width:0; height:0; margin-left:0; margin-top:0; opacity:0; } }
+
+/* logo — 0.7s 弹入 */
 .active .final-logo {
-  animation: popIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) 1.4s forwards;
+  animation: popIn 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) 0.75s forwards;
 }
 @keyframes popIn {
-  0% { opacity: 0; transform: scale(0.2) rotate(-10deg); }
+  0% { opacity: 0; transform: scale(0.1) rotate(-10deg); }
   100% { opacity: 1; transform: scale(1) rotate(0deg); }
 }
 
-/* 文字浮现 — 1.7s */
+/* 文字 — 1.0s 浮现 */
 .active + .brand-text {
-  animation: fadeIn 0.4s ease-out 1.7s forwards;
+  animation: fadeIn 0.35s ease-out 1.0s forwards;
 }
 .active + .brand-text + .brand-sub {
-  animation: fadeIn 0.4s ease-out 1.85s forwards;
+  animation: fadeIn 0.35s ease-out 1.15s forwards;
 }
 @keyframes fadeIn { to { opacity: 1; transform: translateY(0); } }
 
