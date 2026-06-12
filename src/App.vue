@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
-import type { Instance, GPUData, ProbeResult, CostData, Alert, Tab } from './types'
+import type { Instance, GPUData, ProbeResult, CostData, Alert, Tab, SettingsData } from './types'
 import {
   waitForServer, isServerReady,
   loadInstances, setCurrent, getGPU, probeInstance, removeInstance, shutdownInstance,
-  syncPro, loadCost, loadAlerts, createSSEStream,
+  syncPro, loadCost, loadAlerts, loadSettings, saveSettings, createSSEStream,
 } from './api'
 import { useToast } from './composables/useToast'
 import Toast from './components/Toast.vue'
@@ -57,6 +57,27 @@ const alerts = ref<Alert[]>([])
 const logLines = ref<string[]>([])
 const serverOnline = ref(false)
 const toastId = ref(0)
+
+// ── 设置状态（在 App.vue 中，永不丢失）──
+
+const settingsData = ref<SettingsData>({ token: '', ssh_key: '', hasToken: false })
+
+async function refreshSettings() {
+  const data = await loadSettings()
+  if (data && !(data as any).error) {
+    data.hasToken = !!(data.token && data.token !== 'your-token-here')
+    settingsData.value = data
+  }
+}
+
+async function doSaveSettings(token: string, sshKey: string, llmApiKey?: string, llmApiBase?: string, llmModel?: string) {
+  const data = await saveSettings(token, sshKey, llmApiKey, llmApiBase, llmModel)
+  if (data?.ok) {
+    await refreshSettings()
+    notify('设置已保存')
+    refreshCost(true)  // 新 token 可能影响余额查询
+  }
+}
 
 // ── Agent 状态（在 App.vue 中，永不丢失）──
 
@@ -269,8 +290,11 @@ let balanceTimer: ReturnType<typeof setInterval> | null = null
 onMounted(async () => {
   await waitForServer()
   serverOnline.value = isServerReady()
-  await Promise.all([refreshInstances(), refreshCost(), refreshAlerts()])
+  // 一次性预加载所有数据——首次费用用 refresh=1 拉实时余额
+  await Promise.all([refreshInstances(), refreshCost(true), refreshSettings(), refreshAlerts()])
   loading.init = false
+  // 后台再拉一次确保 settings 同步
+  refreshAgentMemory()
 
   sseStream = createSSEStream(
     (gpu) => { if (gpu.uuid === currentInstance.value?.uuid) gpuData.value = gpu },
@@ -369,7 +393,8 @@ onUnmounted(() => {
 
           <SettingsPanel
             v-if="currentTab === 'settings'"
-            @costUpdated="costData = {} as CostData; refreshCost(true)"
+            :settings="settingsData"
+            @save="doSaveSettings($event.token, $event.sshKey, $event.llmApiKey, $event.llmApiBase, $event.llmModel)"
           />
         </KeepAlive>
       </template>
