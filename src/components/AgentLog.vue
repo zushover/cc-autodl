@@ -44,7 +44,7 @@ watch(() => props.conversations.length, () => {
 <template>
   <div style="display:flex;flex-direction:column;height:calc(100vh - 80px);">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-shrink:0;">
-      <h1 style="font-size:1.3rem;font-weight:700;margin:0;">AI Agents</h1>
+      <h1 style="font-size:1.3rem;font-weight:700;margin:0;">Triple A</h1>
       <div style="display:flex;gap:14px;font-size:11px;color:var(--text-dim);">
         <span>{{ conversations.length }} 轮对话</span>
       </div>

@@ -31,7 +31,7 @@ interface AgentConversation {
 
 const tabs: Tab[] = [
   { id: 'dashboard', label: '服务器', icon: '' },
-  { id: 'agent', label: 'AI Agents', icon: '' },
+  { id: 'agent', label: 'Triple A', icon: '' },
   { id: 'knowledge', label: '知识库', icon: '' },
   { id: 'cost', label: '费用', icon: '' },
   { id: 'settings', label: '设置', icon: '' },
@@ -125,13 +125,15 @@ async function sendAgentQuery(text?: string) {
   agentLoading.value = true
   agentQuery.value = ''
 
-  const conv: AgentConversation = { id: Date.now(), query: q, steps: [] }
-  conv.steps.push({ id: Date.now(), timestamp: agentNow(), type: 'user', content: q })
-  agentConversations.value.push(conv)
-
-  // 等待指示器
-  const tid = Date.now()
-  conv.steps.push({ id: tid, timestamp: agentNow(), type: 'thinking', content: '正在分析...' })
+  const convId = Date.now()
+  const userStepId = convId + 1
+  const conv: AgentConversation = { id: convId, query: q, steps: [
+    { id: userStepId, timestamp: agentNow(), type: 'user', content: q },
+    { id: convId + 2, timestamp: agentNow(), type: 'thinking', content: '正在分析...' },
+  ]}
+  agentConversations.value = [...agentConversations.value, conv]
+  // 记住 conv 在数组中的位置（防止后续push导致index偏移）
+  const convIndex = agentConversations.value.length - 1
 
   try {
     const res = await fetch('http://127.0.0.1:8899/api/agent/stream', {
@@ -147,8 +149,9 @@ async function sendAgentQuery(text?: string) {
     let buffer = ''
     let answerText = ''
 
-    // 移除等待指示器
-    conv.steps = conv.steps.filter(s => s.id !== tid)
+    // 移除 thinking step
+    const c = agentConversations.value[convIndex]
+    if (c) c.steps = c.steps.filter(s => s.type !== 'thinking')
 
     while (true) {
       const { done, value } = await reader.read()
@@ -162,51 +165,55 @@ async function sendAgentQuery(text?: string) {
         if (!line.startsWith('data: ')) continue
         try {
           const data = JSON.parse(line.slice(6))
-          const now = agentNow()
+          const cur = agentConversations.value[convIndex]
+          if (!cur) continue
 
           if (data.type === 'tool_call' || data.type === 'tool_start') {
-            conv.steps = [...conv.steps, { id: Date.now(), timestamp: now, type: 'tool_call', toolName: data.tool, content: data.args ? JSON.stringify(data.args).slice(0, 100) : '' }]
+            cur.steps = [...cur.steps, { id: Date.now(), timestamp: agentNow(), type: 'tool_call', toolName: data.tool, content: data.args ? JSON.stringify(data.args).slice(0, 100) : '' }]
           } else if (data.type === 'tool_result') {
-            conv.steps = [...conv.steps, { id: Date.now(), timestamp: now, type: 'tool_result', toolName: data.tool, content: (data.output || '').slice(0, 300) }]
+            cur.steps = [...cur.steps, { id: Date.now(), timestamp: agentNow(), type: 'tool_result', toolName: data.tool, content: (data.output || '').slice(0, 300) }]
           } else if (data.type === 'text') {
             answerText += data.content
-            const lastIdx = conv.steps.length - 1
-            if (lastIdx >= 0 && conv.steps[lastIdx].type === 'answer') {
-              const updated = [...conv.steps]
-              updated[lastIdx] = { ...updated[lastIdx], content: answerText }
-              conv.steps = updated
+            const steps = cur.steps
+            const last = steps[steps.length - 1]
+            if (last && last.type === 'answer') {
+              const copy = [...steps]
+              copy[copy.length - 1] = { ...last, content: answerText }
+              cur.steps = copy
             } else {
-              conv.steps = [...conv.steps, { id: Date.now(), timestamp: now, type: 'answer', content: answerText }]
+              cur.steps = [...steps, { id: Date.now(), timestamp: agentNow(), type: 'answer', content: answerText }]
             }
-            // 每个 text 事件后让 Vue 渲染
             await new Promise(r => requestAnimationFrame(r))
           } else if (data.type === 'done') {
             if (data.answer) {
-              const lastIdx2 = conv.steps.length - 1
-              if (lastIdx2 >= 0 && conv.steps[lastIdx2].type === 'answer') {
-                const updated2 = [...conv.steps]
-                updated2[lastIdx2] = { ...updated2[lastIdx2], content: data.answer }
-                conv.steps = updated2
-              } else if (data.answer) {
-                conv.steps = [...conv.steps, { id: Date.now(), timestamp: now, type: 'answer', content: data.answer }]
+              const st = cur.steps
+              const l2 = st[st.length - 1]
+              if (l2 && l2.type === 'answer') {
+                const cp = [...st]; cp[cp.length - 1] = { ...l2, content: data.answer }; cur.steps = cp
+              } else {
+                cur.steps = [...st, { id: Date.now(), timestamp: agentNow(), type: 'answer', content: data.answer }]
               }
             }
           } else if (data.type === 'error') {
-            conv.steps = [...conv.steps, { id: Date.now(), timestamp: now, type: 'answer', content: 'Error: ' + data.message }]
+            cur.steps = [...cur.steps, { id: Date.now(), timestamp: agentNow(), type: 'answer', content: 'Error: ' + data.message }]
           }
         } catch (_) { /* skip */ }
       }
     }
   } catch (e: unknown) {
-    conv.steps = conv.steps.filter(s => s.id !== tid)
-    conv.steps.push({ id: Date.now(), timestamp: agentNow(), type: 'answer', content: '连接失败: 请确认服务已启动' })
+    const cur = agentConversations.value[convIndex]
+    if (cur) {
+      cur.steps = cur.steps.filter(s => s.type !== 'thinking')
+      cur.steps = [...cur.steps, { id: Date.now(), timestamp: agentNow(), type: 'answer', content: '连接失败: 请确认服务已启动' }]
+    }
   }
 
   agentLoading.value = false
   refreshAgentMemory()
 
-  // 对话自动存入 ChromaDB 共享记忆
-  const finalAnswer = conv.steps.find(s => s.type === 'answer')?.content || ''
+  // 对话自动存入 ChromaDB
+  const cur2 = agentConversations.value[convIndex]
+  const finalAnswer = cur2?.steps.find(s => s.type === 'answer')?.content || ''
   if (finalAnswer) {
     try {
       await fetch('http://127.0.0.1:8899/api/memory/conversations', {
