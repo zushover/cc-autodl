@@ -2,6 +2,11 @@ auto_dl:
   token: "your-token-here"
   api_base: "https://api.autodl.com"
 
+llm:
+  api_key: "your-api-key-here"
+  api_base: "https://api.deepseek.com/v1"
+  model: "deepseek-chat"
+
 ssh:
   key_path: "C:/Users/pengcheng/Desktop/AutoDL/autodl_key"
   user: "root"

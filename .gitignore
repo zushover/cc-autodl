@@ -13,6 +13,11 @@ __pycache__/
 # PyInstaller temp
 build/
 
+# Sidecar binary (build locally with: pyinstaller sidecar.spec)
+src-tauri/binaries/python-sidecar.exe
+src-tauri/target/debug/python-sidecar.exe
+src-tauri/target/release/python-sidecar.exe
+
 # User data (contains tokens and passwords!)
 config.yaml
 autodl_manager/data/*.db
@@ -21,6 +26,9 @@ autodl_manager/data/*.db-wal
 autodl_manager/data/*.log
 autodl_manager/data/*.csv
 autodl_manager/data/state.json*
+
+# Agent memory (ChromaDB data)
+autodl_manager/data/agent_memory/
 
 # Keep data dir
 !autodl_manager/data/.gitkeep

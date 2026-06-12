@@ -590,6 +590,42 @@ def create_app() -> FastAPI:
         _sse_broadcast("settings_updated", {"ok": True})
         return {"ok": True}
 
+    # ─── Agent API：自然语言 GPU 管理 ───
+
+    @app.post("/api/agent/query")
+    async def agent_query(request: Request):
+        """自然语言 Agent 查询。
+
+        POST body: {"query": "检查所有GPU实例，哪些利用率低于10%？"}
+
+        LLM 自主决定调用哪些工具来回答用户问题。
+        配置从 config.yaml 的 llm 节读取。
+        """
+        body = await request.json()
+        query = body.get("query", "").strip()
+        if not query:
+            return JSONResponse({"error": "query 必填"}, 400)
+
+        config = _load_config()
+        llm_config = config.get("llm", {})
+        api_key = llm_config.get("api_key", "")
+        api_base = llm_config.get("api_base", "https://api.deepseek.com/v1")
+        model = llm_config.get("model", "deepseek-chat")
+
+        if not api_key:
+            return JSONResponse(
+                {"error": "LLM API Key 未配置，请在 config.yaml 的 llm.api_key 填入密钥"},
+                400,
+            )
+
+        try:
+            from .agent.agent_loop import run_agent_query
+            result = await run_agent_query(query, api_key=api_key, api_base=api_base, model=model)
+            _sse_broadcast("agent_response", {"query": query, "answer": result})
+            return {"query": query, "answer": result}
+        except Exception as e:
+            return JSONResponse({"error": f"Agent 执行失败: {e}"}, 500)
+
     # ─── SSE 实时流 ───
 
     @app.get("/api/stream")
