@@ -772,10 +772,11 @@ def create_app() -> FastAPI:
         return StreamingResponse(generate(), media_type="text/event-stream")
 
     @app.post("/api/instances/{uuid}/deploy")
-    async def deploy_claude_code(uuid: str, request: Request):
+    async def deploy_claude_code(uuid: str):
         """☀️ 一键部署 Claude Code 到指定实例。
 
-        POST body: {"api_key": "sk-xxx"}  (可选，默认用 config.yaml 的 llm.api_key)
+        从设置页的 AI API 配置读取 DeepSeek API Key，
+        SSH 到服务器：装 Node → 装 Claude Code → 配环境变量 → tmux 启动。
         """
         reg = _get_registry()
         inst = reg.get(uuid)
@@ -786,26 +787,14 @@ def create_app() -> FastAPI:
         if not host:
             return JSONResponse({"error": "SSH host 未配置"}, 400)
 
-        body = await request.json()
         config = _load_config()
-        api_key = body.get("api_key") or config.get("llm", {}).get("api_key", "")
+        api_key = config.get("llm", {}).get("api_key", "")
 
-        # 服务器访问面板的地址：优先用 config 里配的，否则用 detect
-        panel_host = config.get("panel", {}).get("public_host", "")
-        if not panel_host:
-            # AutoDL 实例：尝试推断面板可被访问的地址
-            # 如果服务器和面板在同一局域网/内网，用本机 IP
-            # 否则需要公网可达的地址
-            import socket
-            try:
-                local_ip = socket.gethostbyname(socket.gethostname())
-                panel_host = f"{local_ip}:8899"
-            except Exception:
-                panel_host = f"127.0.0.1:8899"
-
-        # 检查 host:port 格式
-        if ":" not in panel_host:
-            panel_host = f"{panel_host}:8899"
+        if not api_key:
+            return JSONResponse(
+                {"error": "DeepSeek API Key 未配置，请先在「设置」中填写 AI API 接口"},
+                400,
+            )
 
         try:
             from .agent.deploy import ClaudeCodeDeployer
@@ -817,7 +806,7 @@ def create_app() -> FastAPI:
                 key_filename=inst.get("ssh_key_path", ""),
             )
 
-            result = deployer.deploy(panel_host=panel_host, api_key=api_key)
+            result = deployer.deploy(api_key=api_key)
 
             if result["success"]:
                 _sse_broadcast("agent_deployed", {
