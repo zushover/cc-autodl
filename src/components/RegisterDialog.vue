@@ -1,197 +1,100 @@
 <script setup lang="ts">
-import { ref, reactive, watch } from 'vue'
-import type { SourceType } from '../types'
-import { loadGpuTypes, loadRegions, registerInstance, parseSshString } from '../api'
+import { ref, reactive } from 'vue'
+import { registerInstance, parseSshString, syncPro } from '../api'
 import { useToast } from '../composables/useToast'
 
 const emit = defineEmits<{ registered: [] }>()
-
 const { notify } = useToast()
 
-const show = ref(false)
+const visible = ref(false)
+const tab = ref<'web' | 'pro' | 'local'>('web')
 const loading = ref(false)
-const gpuTypes = ref<{ name: string; vram: string; price: number }[]>([])
-const regions = ref<string[]>([])
 
-const form = reactive({
-  source: 'web' as SourceType,
-  uuid: '',
-  ssh_string: '',
-  ssh_host: '',
-  ssh_port: 22,
-  ssh_user: 'root',
-  ssh_password: '',
-  alias: '',
-  gpu_type: '',
-  region: '',
-  price_per_hour: 0,
-  status: 'stopped',
-  tags_str: '',
-})
+const webForm = reactive({ alias: '', ssh_string: '', host: '', port: 22, user: 'root', password: '' })
+const proSyncing = ref(false)
 
-function onGpuSelect() {
-  const gpu = gpuTypes.value.find(g => g.name === form.gpu_type)
-  if (gpu) form.price_per_hour = gpu.price
-}
-
-async function onPasteSsh() {
-  await new Promise(r => setTimeout(r, 100))
-  await parse()
-}
-
-async function parse() {
-  if (!form.ssh_string.trim()) return
-  const resp = await parseSshString(form.ssh_string)
-  if (resp && (resp as any).host) {
-    form.ssh_host = (resp as any).host
-    form.ssh_port = (resp as any).port
-    form.ssh_user = (resp as any).user
-    notify('✅ 已解析: ' + (resp as any).user + '@' + (resp as any).host + ':' + (resp as any).port)
+async function parseSsh() {
+  if (!webForm.ssh_string.trim()) return
+  const data = await parseSshString(webForm.ssh_string)
+  if (data && !(data as any).error) {
+    webForm.host = data.host; webForm.port = data.port; webForm.user = data.user
+    notify('SSH 已解析')
   }
 }
 
-async function open() {
-  form.source = 'web'
-  const [gpuData, regionData] = await Promise.all([loadGpuTypes('web'), loadRegions()])
-  if (gpuData && !(gpuData as any).error) gpuTypes.value = gpuData.gpu_types || []
-  if (regionData && !(regionData as any).error) regions.value = regionData.regions || []
-  show.value = true
-}
-
-function cancel() {
-  show.value = false
-  loading.value = false
-  form.ssh_string = ''; form.ssh_host = ''; form.ssh_port = 22
-  form.ssh_user = 'root'; form.ssh_password = ''; form.alias = ''
-  form.gpu_type = ''; form.region = ''; form.price_per_hour = 0
-  form.status = 'stopped'; form.tags_str = ''
-}
-
-async function submit() {
-  if (form.source !== 'pro') {
-    if (!form.ssh_host.trim()) { notify('请输入 SSH 主机地址', false); return }
-    if (!form.alias.trim()) { notify('请输入别名', false); return }
-    if (!form.ssh_password.trim()) { notify('请输入 SSH 密码（AutoDL 提供）', false); return }
-  } else {
-    if (!form.uuid.trim()) { notify('请输入 Pro 实例 UUID', false); return }
-  }
-
+async function registerWeb() {
+  if (!webForm.host.trim()) { notify('请输入 SSH 地址', false); return }
+  if (!webForm.password.trim()) { notify('请输入 SSH 密码', false); return }
   loading.value = true
-  const body: Record<string, unknown> = { source: form.source, status: form.status }
-  if (form.source === 'pro') {
-    body.uuid = form.uuid
-  } else {
-    body.ssh_host = form.ssh_host; body.ssh_port = form.ssh_port
-    body.ssh_user = form.ssh_user; body.ssh_password = form.ssh_password
-    body.alias = form.alias
-    body.tags = form.tags_str ? form.tags_str.split(',').map(s => s.trim()).filter(Boolean) : []
-    if (form.source === 'web') {
-      body.gpu_type = form.gpu_type; body.region = form.region
-      body.price_per_hour = form.price_per_hour
-    }
-  }
-
-  const data = await registerInstance(body)
-  if (data?.instance) {
-    notify('✅ 注册成功: ' + (data.instance.alias || data.instance.uuid?.slice(0, 14)))
-    show.value = false
-    emit('registered')
-  } else if (data && (data as any).error) {
-    notify('注册失败: ' + (data as any).message, false)
-  }
+  const data = await registerInstance({
+    source: 'web', ssh_host: webForm.host, ssh_port: webForm.port,
+    ssh_user: webForm.user, ssh_password: webForm.password,
+    alias: webForm.alias || undefined, status: 'running',
+  })
   loading.value = false
+  if (data && !(data as any).error) { notify('实例已注册'); emit('registered'); visible.value = false; resetWeb() }
+  else if (data && (data as any).error) notify('注册失败: ' + (data as any).message, false)
 }
 
-watch(() => form.source, async (src) => {
-  if (src === 'web') {
-    const gpuData = await loadGpuTypes('web')
-    if (gpuData && !(gpuData as any).error) gpuTypes.value = gpuData.gpu_types || []
-  }
-})
+async function doSyncPro() {
+  proSyncing.value = true
+  const data = await syncPro()
+  proSyncing.value = false
+  if (data?.ok) { notify('同步成功 ' + data.synced + ' 个实例'); emit('registered'); visible.value = false }
+  else if (data && (data as any).error) notify('同步失败: ' + (data as any).message, false)
+}
 
-defineExpose({ open })
+function resetWeb() { webForm.alias = ''; webForm.ssh_string = ''; webForm.host = ''; webForm.port = 22; webForm.user = 'root'; webForm.password = '' }
+function open() { visible.value = true; tab.value = 'web' }
+function close() { visible.value = false }
+defineExpose({ open, close })
 </script>
 
 <template>
-  <div v-if="show" class="dialog-overlay" @click.self="cancel">
-    <div class="dialog" style="width:540px;max-height:85vh;">
-      <h3>注册实例</h3>
-
-      <!-- Source type -->
-      <div class="form-group">
-        <label>来源</label>
-        <div style="display:flex;gap:8px;">
-          <button :class="'btn'+(form.source==='web'?' btn-primary':'')" @click="form.source='web'" style="flex:1;">Web 控制台</button>
-          <button :class="'btn'+(form.source==='ssh'?' btn-primary':'')" @click="form.source='ssh'" style="flex:1;">自定义 SSH</button>
-          <button :class="'btn'+(form.source==='pro'?' btn-primary':'')" @click="form.source='pro'" style="flex:1;">Pro API</button>
-        </div>
+  <div v-if="visible" class="dialog-overlay" @click.self="close">
+    <div class="dialog">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+        <h3 style="margin:0;">注册实例</h3>
+        <button class="btn btn-ghost" @click="close" style="font-size:18px;padding:0 4px;">&times;</button>
       </div>
 
-      <!-- Pro mode -->
-      <template v-if="form.source==='pro'">
-        <div class="form-group"><label>Pro 实例 UUID <span style="color:#f87171;">*</span></label><input v-model="form.uuid" placeholder="pro-xxxxxxxx"></div>
-      </template>
+      <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--border-light);">
+        <button v-for="t in [{k:'web',l:'Web 实例'},{k:'pro',l:'Pro API'},{k:'local',l:'本地'}]" :key="t.k"
+          @click="tab = t.k as any"
+          :style="{
+            padding:'8px 16px',fontSize:'13px',fontWeight:tab===t.k?600:400,background:'none',border:'none',
+            cursor:'pointer',fontFamily:'inherit',color:tab===t.k?'var(--text)':'var(--text-dim)',
+            borderBottom:tab===t.k?'2px solid var(--text)':'2px solid transparent',marginBottom:'-2px',
+          }"
+        >{{ t.l }}</button>
+      </div>
 
-      <!-- Web/SSH mode -->
-      <template v-else>
-        <div class="form-group">
-          <label>SSH 连接命令 <span style="font-size:11px;color:var(--text-secondary);">（粘贴自动解析）</span></label>
-          <div style="display:flex;gap:6px;">
-            <input v-model="form.ssh_string" placeholder="例如: ssh -p 50479 root@connect.bjb2.seetacloud.com" style="flex:1;font-size:12px;" @paste="onPasteSsh">
-            <button class="btn" @click="parse" style="white-space:nowrap;">🔍 解析</button>
-          </div>
+      <!-- Web -->
+      <div v-if="tab === 'web'">
+        <div class="form-group"><label>名称 <span style="color:var(--text-dim);">可选</span></label><input v-model="webForm.alias" placeholder="如: 3080Ti-训练机" style="width:100%;"></div>
+        <div class="form-group"><label>SSH 命令 <span style="font-size:11px;color:var(--text-dim);">粘贴自动解析</span></label>
+          <div style="display:flex;gap:6px;"><input v-model="webForm.ssh_string" placeholder="ssh -p 49200 root@host" style="flex:1;" @blur="parseSsh"><button class="btn" @click="parseSsh" style="font-size:12px;">解析</button></div>
         </div>
+        <div class="form-row"><div class="form-group"><label>Host</label><input v-model="webForm.host" style="width:100%;"></div><div class="form-group"><label>Port</label><input v-model.number="webForm.port" type="number" style="width:100%;"></div></div>
+        <div class="form-group"><label>User</label><input v-model="webForm.user" style="width:100%;"></div>
+        <div class="form-group"><label>SSH 密码</label><input v-model="webForm.password" type="password" placeholder="AutoDL 控制台复制" style="width:100%;"></div>
+        <button class="btn btn-primary" @click="registerWeb" :disabled="loading" style="width:100%;margin-top:8px;">{{ loading ? '注册中...' : '注册实例' }}</button>
+      </div>
 
-        <div class="form-row">
-          <div class="form-group"><label>主机 <span style="color:#f87171;">*</span></label><input v-model="form.ssh_host" placeholder="connect.xxx.autodl.com"></div>
-          <div class="form-group"><label>端口</label><input v-model.number="form.ssh_port" type="number" style="width:80px;"></div>
-          <div class="form-group"><label>用户</label><input v-model="form.ssh_user" style="width:80px;"></div>
+      <!-- Pro API -->
+      <div v-if="tab === 'pro'">
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:12px;">使用开发者 Token 自动同步 Pro API 创建的所有实例，无需手动输入 SSH 信息。Token 从 autodl.com → 设置 → 开发者 Token 获取。</div>
+        <button class="btn btn-primary" @click="doSyncPro" :disabled="proSyncing" style="width:100%;">{{ proSyncing ? '同步中...' : '同步 Pro API 实例' }}</button>
+      </div>
+
+      <!-- Local -->
+      <div v-if="tab === 'local'">
+        <div style="text-align:center;padding:32px;color:var(--text-dim);">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" style="margin-bottom:10px;"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/></svg>
+          <div style="font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">本地实例</div>
+          <div style="font-size:12px;">局域网 / 本机 GPU 连接，即将推出</div>
         </div>
-
-        <div class="form-group">
-          <label>SSH 密码 <span style="color:#f87171;">*</span> <span style="font-size:11px;color:var(--text-secondary);">（AutoDL 控制台复制）</span></label>
-          <input v-model="form.ssh_password" type="password" placeholder="例如: ppPyRVTCfkGr">
-          <div style="font-size:11px;color:var(--text-dim);margin-top:4px;">AutoDL 实例页 → SSH 连接 → 复制密码（非密钥文件）</div>
-        </div>
-
-        <div class="form-row" v-if="form.source==='web'">
-          <div class="form-group">
-            <label>GPU 型号</label>
-            <select v-model="form.gpu_type" @change="onGpuSelect">
-              <option value="">-- 选择 GPU --</option>
-              <option v-for="g in gpuTypes" :key="g.name" :value="g.name">{{ g.name }} ({{ g.vram }})</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label>区域</label>
-            <select v-model="form.region">
-              <option value="">-- 选择区域 --</option>
-              <option v-for="r in regions" :key="r" :value="r">{{ r }}</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="form-row">
-          <div class="form-group"><label>别名 <span style="color:#f87171;">*</span></label><input v-model="form.alias" placeholder="北京3090-训练"></div>
-          <div class="form-group">
-            <label>初始状态</label>
-            <select v-model="form.status">
-              <option value="stopped">已关机</option>
-              <option value="running">运行中</option>
-              <option value="no_gpu">无卡模式</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="form-group" v-if="form.source==='web'"><label>单价 (¥/h)</label><input v-model.number="form.price_per_hour" type="number" step="0.01"></div>
-        <div class="form-group"><label>标签</label><input v-model="form.tags_str" placeholder="微调, Qwen (逗号分隔)"></div>
-      </template>
-
-      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">
-        <button class="btn" @click="cancel">取消</button>
-        <button class="btn btn-primary" @click="submit" :disabled="loading">{{ loading ? '⏳ 注册中...' : '注册' }}</button>
       </div>
     </div>
   </div>
 </template>
-

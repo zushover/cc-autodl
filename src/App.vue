@@ -11,9 +11,7 @@ import Toast from './components/Toast.vue'
 import Loading from './components/Loading.vue'
 import Sidebar from './components/Sidebar.vue'
 import Dashboard from './components/Dashboard.vue'
-import InstanceList from './components/InstanceList.vue'
 import CostAnalysis from './components/CostAnalysis.vue'
-import LogTerminal from './components/LogTerminal.vue'
 import SettingsPanel from './components/SettingsPanel.vue'
 import RegisterDialog from './components/RegisterDialog.vue'
 import AgentLog from './components/AgentLog.vue'
@@ -31,11 +29,9 @@ interface AgentConversation {
 // ── State ──
 
 const tabs: Tab[] = [
-  { id: 'dashboard', label: '仪表盘', icon: '' },
-  { id: 'instances', label: '实例列表', icon: '' },
+  { id: 'dashboard', label: '服务器', icon: '' },
   { id: 'agent', label: 'AI Agents', icon: '' },
-  { id: 'cost', label: '费用分析', icon: '' },
-  { id: 'logs', label: '日志终端', icon: '' },
+  { id: 'cost', label: '费用', icon: '' },
   { id: 'settings', label: '设置', icon: '' },
 ]
 
@@ -365,17 +361,10 @@ onUnmounted(() => {
             @refreshGPU="doRefreshGPU"
             @shutdown="doShutdownCurrent"
             @setCurrent="doSetCurrent"
-          />
-
-          <InstanceList
-            v-if="currentTab === 'instances'"
-            :instances="instances"
-            :loading="loading"
             @syncPro="doSyncPro"
-            @openRegister="registerDialog?.open()"
-            @setCurrent="doSetCurrent"
-            @probe="doProbe"
             @remove="doRemove"
+            @openRegister="registerDialog?.open()"
+            @probeInstance="doProbe"
           />
 
           <AgentLog
@@ -393,12 +382,6 @@ onUnmounted(() => {
             :costData="costData"
             :loading="loading.cost"
             @refresh="refreshCost(true)"
-          />
-
-          <LogTerminal
-            v-if="currentTab === 'logs'"
-            :currentInstance="currentInstance"
-            :logLines="logLines"
           />
 
           <SettingsPanel
